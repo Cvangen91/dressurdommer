@@ -1,26 +1,302 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
+/* ==========================================================================
+   🎨 Dressurdommer.no – Fargesystem og tema
+   ========================================================================== */
+
+/* ---------------------------------------------------------
+   1️⃣ Grunnpalett – faste basefarger (hentes fra inspirasjonsbildet)
+   --------------------------------------------------------- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --deep-sea: #1c67d2; /* Dyp blå (bakgrunn / hero / hovedfarge) */
+  --blue-sapphire: #2787ea; /* Lysere blå (aksent / hover) */
+  --night-sky: #25395c; /* Mørk blå-lilla (primær knapp / header) */
+  --ocean-fog: #a4b0ff; /* Blågrå (tekst og border) */
+  --warm-sand: #ea7166; /* Lys sand (sekundær) */
+  --warm-sand-light: #fca78a; /* Lysere sand (hover) */
+  --white: #ffffff;
+  --black: #000000;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+/* ---------------------------------------------------------
+   2️⃣ Semantisk tema – definerer hvordan fargene brukes
+   (endre bare her for å lage nye tema)
+   --------------------------------------------------------- */
+:root {
+  /* Grunnleggende struktur */
+  --color-primary: var(--deep-sea); /* hovedfarge */
+  --color-primary-light: var(--blue-sapphire);
+  --color-secondary: var(--warm-sand);
+  --color-secondary-light: var(--warm-sand-light);
+
+  --color-background: var(--color-primary); /* bakerste bakgrunn */
+  --color-surface: var(--white); /* kort / innhold */
+  --color-surface-muted: #f9fafb; /* gråhvit variant */
+
+  --color-text: #111827; /* tekst på hvitt */
+  --color-text-inverse: var(--white); /* hvit tekst på blå */
+  --color-text-muted: #6b7280; /* sekundær tekst */
+  --color-border: #e5e7eb;
+
+  /* Knapper */
+  --btn-primary-bg: var(--night-sky);
+  --btn-primary-hover-bg: var(--blue-sapphire);
+  --btn-primary-text: var(--white);
+
+  --btn-secondary-bg: var(--warm-sand);
+  --btn-secondary-hover-bg: var(--warm-sand-light);
+  --btn-secondary-text: #1f2933;
+
+  /* Radius og skygger */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 18px;
+  --shadow-soft: 0 18px 40px rgba(15, 23, 42, 0.16);
+
+  /* Fonter */
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ---------------------------------------------------------
+   3️⃣ Koble til Tailwind sitt theme-system
+   --------------------------------------------------------- */
+@theme inline {
+  --color-background: var(--color-background);
+  --color-foreground: var(--color-text);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ---------------------------------------------------------
+   4️⃣ Base-styling
+   --------------------------------------------------------- */
+body {
+  background-color: var(--color-background);
+  color: var(--color-text);
+  font-family:
+    var(--font-sans),
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+}
+
+/* ---------------------------------------------------------
+   5️⃣ Design tokens og komponent-stiler
+   --------------------------------------------------------- */
+
+/* --- KNAPPER --- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.2rem;
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 80ms ease;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 🔵 Primær knapp */
+.btn-primary {
+  background-color: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  border-color: var(--btn-primary-bg);
+  box-shadow: var(--shadow-soft);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--btn-primary-hover-bg);
+  border-color: var(--btn-primary-hover-bg);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+/* 🟤 Sekundær knapp */
+.btn-secondary {
+  background-color: var(--btn-secondary-bg);
+  color: var(--btn-secondary-text);
+  border-color: rgba(148, 163, 184, 0.6);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: var(--btn-secondary-hover-bg);
+}
+
+/* 👻 Ghost-knapp */
+.btn-ghost {
+  background: transparent;
+  color: var(--white);
+  border-color: transparent;
+}
+
+.btn-ghost:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* --- KORT / FELT --- */
+.card {
+  background-color: var(--color-surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-soft);
+  padding: 1.5rem;
+}
+
+/* --- INPUTS --- */
+.input {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.9rem;
+  background-color: var(--white);
+  color: var(--color-text);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background-color 150ms ease;
+}
+
+.input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--blue-sapphire);
+  box-shadow: 0 0 0 1px rgba(19, 89, 157, 0.2);
+  background-color: var(--white);
+}
+
+/* --- LABELS OG TEKST --- */
+.label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.text-muted {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+/* --- BADGES --- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background-color: var(--warm-sand-light);
+  color: var(--night-sky);
+}
+
+/* --- HEADER --- */
+header {
+  background-color: var(--night-sky) !important;
+  color: var(--white);
+}
+
+footer {
+  background-color: var(--night-sky) !important;
+  color: var(--white) !important;
+}
+
+footer a {
+  color: var(--white);
+}
+
+footer a:hover {
+  color: var(--warm-sand);
+}
+
+@media (max-width: 768px) {
+  footer {
+    text-align: center;
+    padding: 2rem 1rem;
+  }
+
+  footer .max-w-6xl {
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
+  footer p {
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+
+  footer a {
+    display: inline-block;
+    margin-top: 0.5rem;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ---------------------------------------------------------
+   6️⃣ Tailwind-kompatible fargeklasser (utility helpers)
+   --------------------------------------------------------- */
+.bg-deep-sea {
+  background-color: var(--deep-sea);
+}
+.bg-blue-sapphire {
+  background-color: var(--blue-sapphire);
+}
+.bg-night-sky {
+  background-color: var(--night-sky);
+}
+.bg-ocean-fog {
+  background-color: var(--ocean-fog);
+}
+.bg-warm-sand {
+  background-color: var(--warm-sand);
+}
+.bg-warm-sand-light {
+  background-color: var(--warm-sand-light);
+}
+
+.border-deep-sea {
+  border-color: var(--deep-sea);
+}
+.border-blue-sapphire {
+  border-color: var(--blue-sapphire);
+}
+.border-ocean-fog {
+  border-color: var(--ocean-fog);
+}
+
+.text-deep-sea {
+  color: var(--deep-sea);
+}
+.text-blue-sapphire {
+  color: var(--blue-sapphire);
+}
+.text-ocean-fog {
+  color: var(--ocean-fog);
+}
+.text-night-sky {
+  color: var(--night-sky);
 }

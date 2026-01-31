@@ -1,0 +1,172 @@
+'use client';
+
+import { useState, FormEvent } from 'react';
+import { supabase } from '@/lib/supabaseClient';
+import { useRouter } from 'next/navigation';
+
+const JUDGE_LEVELS = ['DDA', 'DD1', 'DD2', 'DD3', 'DD4', 'FEI'];
+
+export default function SignupPage() {
+  const router = useRouter();
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const [birthday, setBirthday] = useState('');
+  const [judgeLevel, setJudgeLevel] = useState('');
+  const [judgeStart, setJudgeStart] = useState('');
+  const [riderDistrict, setRiderDistrict] = useState('');
+
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  async function handleSignup(e: FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg(null);
+
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+
+    if (error) {
+      setErrorMsg(error.message);
+      setLoading(false);
+      return;
+    }
+
+    const user = data.user;
+
+    if (user) {
+      const { error: profileError } = await supabase.from('profiles').insert({
+        user_id: user.id,
+        full_name: fullName,
+        birthday: birthday || null,
+        judge_level: judgeLevel || null,
+        judge_start: judgeStart || null,
+        rider_district: riderDistrict || null,
+      });
+
+      if (profileError) {
+        setErrorMsg(profileError.message);
+        setLoading(false);
+        return;
+      }
+    }
+
+    setLoading(false);
+    router.push('/login');
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[--color-background] px-4">
+      <div className="card w-full max-w-md">
+        <h1 className="text-2xl font-semibold text-[--deep-sea] mb-6 text-center">
+          Lag ny brukerkonto
+        </h1>
+
+        <form onSubmit={handleSignup} className="space-y-4">
+          {/* Fullt navn */}
+          <div>
+            <label className="label">Fullt navn</label>
+            <input
+              type="text"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              className="input"
+              required
+            />
+          </div>
+
+          {/* E-post */}
+          <div>
+            <label className="label">E-post</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="input"
+              required
+            />
+          </div>
+
+          {/* Passord */}
+          <div>
+            <label className="label">Passord</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="input"
+              required
+            />
+          </div>
+
+          {/* Fødselsdato */}
+          <div>
+            <label className="label">Fødselsdato</label>
+            <input
+              type="date"
+              value={birthday}
+              onChange={(e) => setBirthday(e.target.value)}
+              className="input"
+            />
+          </div>
+
+          {/* Dommernivå */}
+          <div>
+            <label className="label">Dommernivå</label>
+            <select
+              value={judgeLevel}
+              onChange={(e) => setJudgeLevel(e.target.value)}
+              className="input"
+            >
+              <option value="">Velg dommernivå</option>
+              {JUDGE_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Start som dommer */}
+          <div>
+            <label className="label">Startet som dommer</label>
+            <input
+              type="date"
+              value={judgeStart}
+              onChange={(e) => setJudgeStart(e.target.value)}
+              className="input"
+            />
+          </div>
+
+          {/* Rytterkrets */}
+          <div>
+            <label className="label">Rytterkrets</label>
+            <input
+              type="text"
+              value={riderDistrict}
+              onChange={(e) => setRiderDistrict(e.target.value)}
+              className="input"
+            />
+          </div>
+
+          {errorMsg && <p className="text-red-600 text-sm">{errorMsg}</p>}
+
+          <button type="submit" disabled={loading} className="btn btn-primary w-full">
+            {loading ? 'Oppretter...' : 'Registrer'}
+          </button>
+        </form>
+
+        <p className="text-muted text-center mt-6">
+          Har du allerede konto?{' '}
+          <a href="/login" className="text-[--deep-sea] font-medium hover:underline">
+            Logg inn her
+          </a>
+        </p>
+      </div>
+    </div>
+  );
+}
