@@ -145,7 +145,7 @@ export default function ReportDetailPage() {
     <div className="max-w-3xl mx-auto">
       <div className="card space-y-6">
         <div className="flex justify-between items-center">
-          <h1 className="text-2xl font-semibold text-deep-sea">Dommerrapport</h1>
+          <h1 className="text-2xl font-semibold text-deep-sea">Dommermøterapport</h1>
           <button className="btn btn-secondary" onClick={() => router.push('/profile')}>
             ← Tilbake
           </button>

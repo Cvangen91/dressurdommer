@@ -19,11 +19,17 @@ interface Notification {
   created_at: string;
 }
 
+type JudgeMeetingReportStatus = 'draft' | 'submitted';
+
 interface Report {
   id: string;
-  show_date: string;
-  location: string;
+  show_date: string | null;
+  location: string | null;
   created_at: string;
+  updated_at: string | null;
+  status: JudgeMeetingReportStatus | null; // null = gamle rader uten status -> behandles som draft
+  submitted_at: string | null;
+  payload?: { draft?: boolean | null } | null; // fallback for eldre data
 }
 
 interface ObservationYearSummary {
@@ -65,6 +71,8 @@ export default function ProfilePage() {
   // 🔹 Hent profil og rapporter
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true);
+
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -97,19 +105,17 @@ export default function ProfilePage() {
         .eq('is_read', false)
         .order('created_at', { ascending: false });
 
-      if (notificationsData) {
-        setNotifications(notificationsData);
-      }
+      if (notificationsData) setNotifications(notificationsData as Notification[]);
 
-      // ✅ Rapporter (vi sorterer også i UI, men dette hjelper litt)
+      // ✅ Rapporter: hent status + submitted_at + updated_at (+ payload som fallback)
       const { data: reportsData } = await supabase
         .from('judge_meeting_reports')
-        .select('id, show_date, location, created_at')
+        .select('id, show_date, location, created_at, updated_at, status, submitted_at, payload')
         .eq('user_id', user.id)
         .order('show_date', { ascending: false })
         .order('created_at', { ascending: false });
 
-      if (reportsData) setReports(reportsData);
+      if (reportsData) setReports(reportsData as Report[]);
 
       const { data: obsYears } = await supabase
         .from('observation_year')
@@ -127,7 +133,7 @@ export default function ProfilePage() {
         .order('year', { ascending: false });
 
       if (obsYears) {
-        const summaries = obsYears.map((y: any) => {
+        const summaries = (obsYears as any[]).map((y: any) => {
           const dates = (y.observations ?? [])
             .map((o: any) => o.date)
             .sort()
@@ -254,6 +260,39 @@ export default function ProfilePage() {
     }
   }
 
+  // ✅ Status: kun "utkast" eller "sendt inn"
+  const getReportStatus = (r: Report): JudgeMeetingReportStatus => {
+    if (r.status === 'submitted') return 'submitted';
+    if (r.status === 'draft') return 'draft';
+
+    // fallback for gamle rader uten status: bruk payload.draft hvis den finnes
+    if (r.payload && typeof r.payload.draft === 'boolean') {
+      return r.payload.draft ? 'draft' : 'submitted';
+    }
+
+    // default: utkast
+    return 'draft';
+  };
+
+  const badgeText = (status: JudgeMeetingReportStatus) =>
+    status === 'submitted' ? 'Sendt inn' : 'Utkast';
+
+  // ✅ Farger: utkast = oransje, sendt inn = grønn
+  const badgeClass = (status: JudgeMeetingReportStatus) =>
+    status === 'submitted' ? 'badge badge-submitted' : 'badge badge-pending';
+
+  const reportMetaText = (r: Report, status: JudgeMeetingReportStatus) => {
+    const fmt = (d: string) => new Date(d).toLocaleDateString('no-NO');
+
+    if (status === 'submitted') {
+      const when = r.submitted_at || r.created_at;
+      return `Sendt inn: ${fmt(when)}`;
+    }
+
+    const when = r.updated_at || r.created_at;
+    return `Sist lagret: ${fmt(when)}`;
+  };
+
   // ✅ Rapporter: filter + sort i UI
   const filteredSortedReports = useMemo(() => {
     const q = reportSearch.trim().toLowerCase();
@@ -268,9 +307,19 @@ export default function ProfilePage() {
       return Number.isNaN(t) ? 0 : t;
     };
 
+    const primarySortValue = (r: Report) => {
+      const status = getReportStatus(r);
+      return (
+        toDateValue(r.show_date) ||
+        (status === 'draft'
+          ? toDateValue(r.updated_at) || toDateValue(r.created_at)
+          : toDateValue(r.submitted_at) || toDateValue(r.created_at))
+      );
+    };
+
     return [...filtered].sort((a, b) => {
-      const aPrimary = toDateValue(a.show_date) || toDateValue(a.created_at);
-      const bPrimary = toDateValue(b.show_date) || toDateValue(b.created_at);
+      const aPrimary = primarySortValue(a);
+      const bPrimary = primarySortValue(b);
 
       return reportSort === 'date_desc' ? bPrimary - aPrimary : aPrimary - bPrimary;
     });
@@ -493,12 +542,12 @@ export default function ProfilePage() {
                     )}
                   </div>
 
-                  <span className="badge">
-                    {year.status === 'open'
-                      ? 'Pågår'
-                      : year.status === 'submitted'
-                        ? 'Sendt inn'
-                        : 'Godkjent'}
+                  <span
+                    className={`badge ${
+                      year.status === 'submitted' ? 'badge-submitted' : 'badge-pending'
+                    }`}
+                  >
+                    {year.status === 'submitted' ? 'Sendt inn' : 'Pågår'}
                   </span>
                 </div>
               </div>
@@ -541,30 +590,42 @@ export default function ProfilePage() {
         ) : (
           <>
             <div className="space-y-4">
-              {pagedReports.map((report) => (
-                <div
-                  key={report.id}
-                  className="card cursor-pointer hover:shadow-lg transition-shadow"
-                  onClick={() => router.push(`/report/${report.id}`)}
-                >
-                  <div className="flex justify-between items-center gap-4">
-                    <div>
-                      <p className="font-medium text-[--deep-sea]">
-                        {report.location || 'Ukjent sted'}
-                      </p>
-                      <p className="text-sm text-muted">
-                        Stevnedato:{' '}
-                        {report.show_date
-                          ? new Date(report.show_date).toLocaleDateString('no-NO')
-                          : '—'}
-                      </p>
+              {pagedReports.map((report) => {
+                const status = getReportStatus(report);
+
+                return (
+                  <div
+                    key={report.id}
+                    className="card cursor-pointer hover:shadow-lg transition-shadow"
+                    onClick={() =>
+                      status === 'draft'
+                        ? router.push(`/report/edit/${report.id}`)
+                        : router.push(`/report/${report.id}`)
+                    }
+                  >
+                    <div className="flex justify-between items-center gap-4">
+                      <div className="min-w-0">
+                        <p className="font-medium text-[--deep-sea] truncate">
+                          {report.location || 'Ukjent sted'}
+                        </p>
+                        <p className="text-sm text-muted">
+                          Stevnedato:{' '}
+                          {report.show_date
+                            ? new Date(report.show_date).toLocaleDateString('no-NO')
+                            : '—'}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-2 shrink-0">
+                        <span className={badgeClass(status)}>{badgeText(status)}</span>
+                        <p className="text-xs text-muted whitespace-nowrap">
+                          {reportMetaText(report, status)}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-xs text-muted whitespace-nowrap">
-                      Sendt inn: {new Date(report.created_at).toLocaleDateString('no-NO')}
-                    </p>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <Pagination

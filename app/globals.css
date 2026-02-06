@@ -210,8 +210,16 @@ body {
   border-radius: 999px;
   font-size: 0.75rem;
   font-weight: 500;
+}
+
+.badge-pending {
   background-color: var(--warm-sand-light);
   color: var(--night-sky);
+}
+
+.badge-submitted {
+  background-color: rgba(34, 197, 94, 0.18); /* grønn */
+  color: #166534;
 }
 
 /* --- HEADER --- */

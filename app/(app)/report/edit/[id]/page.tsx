@@ -2,20 +2,44 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import { useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 
 type JudgeSuggestion = { user_id: string; full_name: string };
+type JudgeMeetingReportStatus = 'draft' | 'submitted';
 
-export default function ReportNewPage() {
+type ReportRow = {
+  id: string;
+  user_id: string;
+  show_date: string | null;
+  location: string | null;
+  judge_1: string | null;
+  judge_2: string | null;
+  judge_3: string | null;
+  judge_1_id: string | null;
+  judge_2_id: string | null;
+  judge_3_id: string | null;
+  status: JudgeMeetingReportStatus | null;
+  submitted_at: string | null;
+  created_at: string;
+  updated_at: string | null;
+  payload: any;
+};
+
+export default function ReportEditPage() {
   const router = useRouter();
+  const params = useParams();
+  const id = typeof params?.id === 'string' ? params.id : '';
+
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
 
-  // ✅ Viktig: vi oppretter rapport tidlig og oppdaterer den videre.
-  // Da blir "Lagre utkast" en UPDATE (ikke ny INSERT hver gang),
-  // og du kan fortsette å redigere samme rapport.
-  const [reportId, setReportId] = useState<string | null>(null);
+  // Navigasjon
+  const nextStep = () => setStep((s) => Math.min(5, s + 1));
+  const prevStep = () => setStep((s) => Math.max(1, s - 1));
+
+  const [reportStatus, setReportStatus] = useState<JudgeMeetingReportStatus>('draft');
 
   // --- STEG 1: Grunninfo ---
   const [showDate, setShowDate] = useState('');
@@ -35,12 +59,44 @@ export default function ReportNewPage() {
       ? (Number(highestPercent) - Number(lowestPercent)).toFixed(2)
       : '';
 
-  // --- Dropdown: dommer-søk (kan fortsatt skrive fritekst) ---
+  // --- Dropdown: dommer-søk ---
   const [judgeSuggestions, setJudgeSuggestions] = useState<JudgeSuggestion[]>([]);
   const [activeJudgeField, setActiveJudgeField] = useState<1 | 2 | 3 | null>(null);
   const [showJudgeDropdown, setShowJudgeDropdown] = useState(false);
   const judgeDropdownRef = useRef<HTMLDivElement | null>(null);
 
+  // --- STEG 2: Punkter ---
+  const REPORT_POINTS = [
+    'Takt i skritt',
+    'Takt i trav',
+    'Takt i galopp',
+    'Løsgjorthet',
+    'Kontakt',
+    'Schwung',
+    'Retthet',
+    'Samling',
+    'Teknisk feil i øvelsene',
+    'Allment inntrykk og harmoni',
+  ];
+
+  const [scores, setScores] = useState<Record<string, number | ''>>({});
+  const [comments, setComments] = useState<Record<string, string>>({});
+  const [showHelp, setShowHelp] = useState(false);
+
+  // --- STEG 3: Refleksjon ---
+  const [specialConditions, setSpecialConditions] = useState('');
+  const [specialComment, setSpecialComment] = useState('');
+  const [otherCause, setOtherCause] = useState('');
+  const [reflection, setReflection] = useState('');
+
+  // --- STEG 4: Bilder ---
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [existingImagePaths, setExistingImagePaths] = useState<string[]>([]);
+
+  const isLocked = reportStatus !== 'draft';
+
+  // Hent dommere til autocomplete
   useEffect(() => {
     const loadJudges = async () => {
       const { data } = await supabase
@@ -54,7 +110,7 @@ export default function ReportNewPage() {
     loadJudges();
   }, []);
 
-  // Klikk utenfor-lukking
+  // Klikk utenfor-lukking dropdown
   useEffect(() => {
     const onMouseDown = (e: MouseEvent) => {
       if (!showJudgeDropdown) return;
@@ -90,37 +146,83 @@ export default function ReportNewPage() {
     if (field === 3) setJudge3(value);
   };
 
-  // --- STEG 2: Punkter ---
-  const REPORT_POINTS = [
-    'Takt i skritt',
-    'Takt i trav',
-    'Takt i galopp',
-    'Løsgjorthet',
-    'Kontakt',
-    'Schwung',
-    'Retthet',
-    'Samling',
-    'Teknisk feil i øvelsene',
-    'Allment inntrykk og harmoni',
-  ];
+  // Fetch report
+  useEffect(() => {
+    const fetchReport = async () => {
+      setPageLoading(true);
+      setMessage(null);
 
-  const [scores, setScores] = useState<Record<string, number | ''>>({});
-  const [comments, setComments] = useState<Record<string, string>>({});
-  const [showHelp, setShowHelp] = useState(false);
+      if (!id) {
+        setMessage('Ugyldig rapport-ID.');
+        setPageLoading(false);
+        return;
+      }
 
-  // --- STEG 3: Refleksjon ---
-  const [specialConditions, setSpecialConditions] = useState('');
-  const [specialComment, setSpecialComment] = useState('');
-  const [otherCause, setOtherCause] = useState('');
-  const [reflection, setReflection] = useState('');
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-  // --- STEG 4: Bilder ---
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+      if (!user) {
+        router.push('/login');
+        return;
+      }
 
-  // Navigasjon
-  const nextStep = () => setStep((s) => Math.min(5, s + 1));
-  const prevStep = () => setStep((s) => Math.max(1, s - 1));
+      const { data, error } = await supabase
+        .from('judge_meeting_reports')
+        .select(
+          'id, user_id, show_date, location, judge_1, judge_2, judge_3, judge_1_id, judge_2_id, judge_3_id, status, submitted_at, created_at, updated_at, payload'
+        )
+        .eq('id', id)
+        .single();
+
+      if (error || !data) {
+        setMessage('Fant ikke rapporten.');
+        setPageLoading(false);
+        return;
+      }
+
+      // Sikkerhet: kun eier kan redigere her
+      if (data.user_id !== user.id) {
+        setMessage('Du har ikke tilgang til å redigere denne rapporten.');
+        setPageLoading(false);
+        return;
+      }
+
+      const payload = (data as ReportRow).payload || {};
+      const status: JudgeMeetingReportStatus =
+        (data as ReportRow).status === 'submitted' ? 'submitted' : 'draft';
+
+      setReportStatus(status);
+
+      setShowDate((data as ReportRow).show_date ?? '');
+      setLocation((data as ReportRow).location ?? '');
+      setJudge1((data as ReportRow).judge_1 ?? '');
+      setJudge2((data as ReportRow).judge_2 ?? '');
+      setJudge3((data as ReportRow).judge_3 ?? '');
+
+      setClassLevel(payload.classLevel ?? '');
+      setRiderName(payload.riderName ?? '');
+      setHorseName(payload.horseName ?? '');
+
+      setTotalPercent(payload.totalPercent ?? '');
+      setHighestPercent(payload.highestPercent ?? '');
+      setLowestPercent(payload.lowestPercent ?? '');
+
+      setScores(payload.scores ?? {});
+      setComments(payload.comments ?? {});
+      setSpecialConditions(payload.specialConditions ?? '');
+      setSpecialComment(payload.specialComment ?? '');
+      setOtherCause(payload.otherCause ?? '');
+      setReflection(payload.reflection ?? '');
+
+      const paths = Array.isArray(payload.imagePaths) ? payload.imagePaths : [];
+      setExistingImagePaths(paths);
+
+      setPageLoading(false);
+    };
+
+    fetchReport();
+  }, [id, router]);
 
   // Finn dommer-id (returnerer null om navnet ikke finnes)
   async function findJudgeIdByName(name: string) {
@@ -131,7 +233,7 @@ export default function ReportNewPage() {
     return (data as any)?.[0]?.user_id || null;
   }
 
-  // Last opp bilder til Supabase (lagrer path/filnavn)
+  // Last opp bilder til Supabase
   async function uploadImages(userId: string) {
     if (!selectedFiles.length) return [];
 
@@ -145,13 +247,12 @@ export default function ReportNewPage() {
         upsert: false,
       });
 
-      if (error) continue;
-      paths.push(fileName);
+      if (!error) paths.push(fileName);
     }
+
     return paths;
   }
 
-  // ✅ Bygg payload konsistent ett sted
   const buildPayload = (extra?: Record<string, any>) => ({
     classLevel,
     riderName,
@@ -166,55 +267,14 @@ export default function ReportNewPage() {
     specialComment,
     otherCause,
     reflection,
+    imagePaths: existingImagePaths,
     ...extra,
   });
 
-  // ✅ Opprett rapport første gang (draft) og få id tilbake
-  async function ensureDraftReportId(userId: string) {
-    if (reportId) return reportId;
-
-    const [judge1Id, judge2Id, judge3Id] = await Promise.all([
-      findJudgeIdByName(judge1),
-      findJudgeIdByName(judge2),
-      findJudgeIdByName(judge3),
-    ]);
-
-    const { data: created, error } = await supabase
-      .from('judge_meeting_reports')
-      .insert({
-        user_id: userId,
-        show_date: showDate || null,
-        location: location || null,
-        judge_1: judge1 || null,
-        judge_2: judge2 || null,
-        judge_3: judge3 || null,
-        judge_1_id: judge1Id,
-        judge_2_id: judge2Id,
-        judge_3_id: judge3Id,
-
-        // ✅ Dette må matche nye policies:
-        // status='draft' for utkast, og IKKE sette submitted_at her.
-        status: 'draft',
-        submitted_at: null,
-
-        payload: buildPayload({
-          imagePaths: [],
-        }),
-      })
-      .select('id')
-      .single();
-
-    if (error || !created?.id) {
-      throw new Error('Kunne ikke opprette utkast.');
-    }
-
-    setReportId(created.id);
-    return created.id as string;
-  }
-
-  // ✅ Lagre utkast (UPDATE hvis finnes, ellers INSERT draft)
+  // Lagre (UPDATE)
   const handleSaveDraft = async () => {
-    if (loading) return;
+    if (loading || isLocked) return;
+
     setLoading(true);
     setMessage(null);
 
@@ -228,15 +288,13 @@ export default function ReportNewPage() {
         return;
       }
 
-      const id = await ensureDraftReportId(user.id);
-
       const [judge1Id, judge2Id, judge3Id] = await Promise.all([
         findJudgeIdByName(judge1),
         findJudgeIdByName(judge2),
         findJudgeIdByName(judge3),
       ]);
 
-      const { error: updateError } = await supabase
+      const { error } = await supabase
         .from('judge_meeting_reports')
         .update({
           show_date: showDate || null,
@@ -247,31 +305,30 @@ export default function ReportNewPage() {
           judge_1_id: judge1Id,
           judge_2_id: judge2Id,
           judge_3_id: judge3Id,
-
-          // ✅ Fortsett å være draft
           status: 'draft',
           submitted_at: null,
-
           payload: buildPayload(),
         })
         .eq('id', id);
 
-      if (updateError) {
+      if (error) {
         setMessage('Kunne ikke lagre utkast. Prøv igjen.');
         return;
       }
 
       setMessage('Utkast lagret!');
+      router.push('/profile');
     } catch {
-      setMessage('Noe gikk galt ved lagring av utkast.');
+      setMessage('Noe gikk galt ved lagring.');
     } finally {
       setLoading(false);
     }
   };
 
-  // ✅ Send inn rapport (oppdater samme draft, sett status=submitted, sett submitted_at)
+  // Send inn (UPDATE -> submitted)
   const handleSubmit = async () => {
-    if (loading) return;
+    if (loading || isLocked) return;
+
     setLoading(true);
     setMessage(null);
 
@@ -285,15 +342,15 @@ export default function ReportNewPage() {
         return;
       }
 
-      const id = await ensureDraftReportId(user.id);
-
       const [judge1Id, judge2Id, judge3Id] = await Promise.all([
         findJudgeIdByName(judge1),
         findJudgeIdByName(judge2),
         findJudgeIdByName(judge3),
       ]);
 
-      const imagePaths = await uploadImages(user.id);
+      const newImagePaths = await uploadImages(user.id);
+      const mergedImagePaths = [...existingImagePaths, ...newImagePaths];
+      setExistingImagePaths(mergedImagePaths);
 
       const { error: submitError } = await supabase
         .from('judge_meeting_reports')
@@ -306,14 +363,9 @@ export default function ReportNewPage() {
           judge_1_id: judge1Id,
           judge_2_id: judge2Id,
           judge_3_id: judge3Id,
-
-          // ✅ Dette gjør den "låst" etter policies (status != draft)
           status: 'submitted',
           submitted_at: new Date().toISOString(),
-
-          payload: buildPayload({
-            imagePaths,
-          }),
+          payload: buildPayload({ imagePaths: mergedImagePaths }),
         })
         .eq('id', id);
 
@@ -321,6 +373,8 @@ export default function ReportNewPage() {
         setMessage('Kunne ikke sende inn rapport. Prøv igjen.');
         return;
       }
+
+      setReportStatus('submitted');
 
       const { error: fnError } = await supabase.functions.invoke('send-judge-meeting-report', {
         body: {
@@ -344,7 +398,6 @@ export default function ReportNewPage() {
     }
   };
 
-  // Stegindikator
   const steps = [
     { id: 1, label: 'Grunninfo' },
     { id: 2, label: 'Rapport' },
@@ -364,17 +417,31 @@ export default function ReportNewPage() {
     setPreviewUrls(fileArray.map((f) => URL.createObjectURL(f)));
   };
 
-  // Rydd opp object URLs
   useEffect(() => {
     return () => {
       previewUrls.forEach((u) => URL.revokeObjectURL(u));
     };
   }, [previewUrls]);
 
+  if (pageLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-white">
+        Laster rapport...
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto">
       <div className="card space-y-6">
-        <h1 className="text-2xl font-semibold text-deep-sea text-center">Ny dommermøterapport</h1>
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-semibold text-deep-sea">
+            {isLocked ? 'Dommermøterapport (sendt inn)' : 'Rediger utkast'}
+          </h1>
+          <button className="btn btn-secondary" onClick={() => router.push('/profile')}>
+            ← Tilbake
+          </button>
+        </div>
 
         {message && (
           <div
@@ -426,10 +493,11 @@ export default function ReportNewPage() {
           </div>
         </div>
 
-        {/* --- STEG 1: Grunninfo --- */}
+        {/* --- STEG 1 --- */}
         {step === 1 && (
           <>
             <h2 className="text-xl font-semibold text-deep-sea mb-4">Steg 1: Grunninformasjon</h2>
+
             <div className="grid md:grid-cols-2 gap-4">
               <div>
                 <label className="label">Dato</label>
@@ -438,6 +506,7 @@ export default function ReportNewPage() {
                   value={showDate}
                   onChange={(e) => setShowDate(e.target.value)}
                   className="input"
+                  disabled={isLocked}
                 />
               </div>
               <div>
@@ -447,11 +516,11 @@ export default function ReportNewPage() {
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   className="input"
+                  disabled={isLocked}
                 />
               </div>
             </div>
 
-            {/* Dommer 1-3 med søk + dropdown + klikk-utenfor-lukking (men fritekst er lov) */}
             <div ref={judgeDropdownRef} className="grid md:grid-cols-3 gap-4">
               {[
                 { n: 1 as const, label: 'Dommer 1', value: judge1 },
@@ -465,20 +534,24 @@ export default function ReportNewPage() {
                     type="text"
                     value={f.value}
                     onChange={(e) => {
+                      if (isLocked) return;
                       setJudgeValue(f.n, e.target.value);
                       setActiveJudgeField(f.n);
                       setShowJudgeDropdown(true);
                     }}
                     onFocus={() => {
+                      if (isLocked) return;
                       setActiveJudgeField(f.n);
                       if (f.value.trim().length >= 2) setShowJudgeDropdown(true);
                     }}
                     className="input"
                     placeholder="Skriv navn"
                     autoComplete="off"
+                    disabled={isLocked}
                   />
 
-                  {showJudgeDropdown &&
+                  {!isLocked &&
+                    showJudgeDropdown &&
                     activeJudgeField === f.n &&
                     filteredJudgeSuggestions.length > 0 && (
                       <div className="absolute z-50 bg-white border rounded shadow w-full mt-1 max-h-48 overflow-y-auto">
@@ -510,6 +583,7 @@ export default function ReportNewPage() {
                   value={classLevel}
                   onChange={(e) => setClassLevel(e.target.value)}
                   className="input"
+                  disabled={isLocked}
                 />
               </div>
               <div>
@@ -519,6 +593,7 @@ export default function ReportNewPage() {
                   value={riderName}
                   onChange={(e) => setRiderName(e.target.value)}
                   className="input"
+                  disabled={isLocked}
                 />
               </div>
             </div>
@@ -531,6 +606,7 @@ export default function ReportNewPage() {
                   value={horseName}
                   onChange={(e) => setHorseName(e.target.value)}
                   className="input"
+                  disabled={isLocked}
                 />
               </div>
               <div>
@@ -545,6 +621,7 @@ export default function ReportNewPage() {
                     )
                   }
                   className="input"
+                  disabled={isLocked}
                 />
               </div>
             </div>
@@ -562,6 +639,7 @@ export default function ReportNewPage() {
                     )
                   }
                   className="input"
+                  disabled={isLocked}
                 />
               </div>
               <div>
@@ -576,6 +654,7 @@ export default function ReportNewPage() {
                     )
                   }
                   className="input"
+                  disabled={isLocked}
                 />
               </div>
               <div>
@@ -597,7 +676,7 @@ export default function ReportNewPage() {
           </>
         )}
 
-        {/* --- STEG 2: Dommerrapport --- */}
+        {/* --- STEG 2 --- */}
         {step === 2 && (
           <>
             <h2 className="text-xl font-semibold text-deep-sea mb-4">Steg 2: Dommerrapport</h2>
@@ -615,10 +694,7 @@ export default function ReportNewPage() {
                 <p>
                   Dommermøterapporter fylles ut når to dommere har et prosentavvik på mer enn 7%
                   (10% i kür). Hensikten med Dommermøterapporter er å oppklare årsaken ved store
-                  forskjeller mellom dommerne. Målet er å forstå hva som førte til forskjellene og
-                  fremme et mest mulig omforent syn i bedømmingen. Rapporten fylles ut ved at man
-                  angir hvor stor betydning de følgende punktene hadde for avviket. 0 betyr ingen
-                  påvirkning, mens 5 betyr stor påvirkning/hovedårsak.
+                  forskjeller mellom dommerne.
                 </p>
               </div>
             )}
@@ -631,12 +707,15 @@ export default function ReportNewPage() {
                     <button
                       key={v}
                       type="button"
-                      onClick={() => setScores((prev) => ({ ...prev, [p]: v }))}
+                      onClick={() => {
+                        if (isLocked) return;
+                        setScores((prev) => ({ ...prev, [p]: v }));
+                      }}
                       className={`px-3 h-10 rounded-md border text-sm font-semibold transition-all ${
                         scores[p] === v
                           ? 'bg-deep-sea text-white border-deep-sea'
                           : 'bg-white border-ocean-fog text-blue-sapphire hover:border-deep-sea'
-                      }`}
+                      } ${isLocked ? 'opacity-60 pointer-events-none' : ''}`}
                       title={v === 0 ? 'Ikke relevant' : String(v)}
                     >
                       {v === 0 ? 'Ikke relevant' : v}
@@ -647,9 +726,13 @@ export default function ReportNewPage() {
                 {scores[p] !== undefined && scores[p] !== 0 && scores[p] !== '' && (
                   <textarea
                     value={comments[p] ?? ''}
-                    onChange={(e) => setComments((prev) => ({ ...prev, [p]: e.target.value }))}
+                    onChange={(e) => {
+                      if (isLocked) return;
+                      setComments((prev) => ({ ...prev, [p]: e.target.value }));
+                    }}
                     className="input"
                     placeholder="Kommentar (valgfritt)"
+                    disabled={isLocked}
                   />
                 )}
               </div>
@@ -676,7 +759,7 @@ export default function ReportNewPage() {
           </>
         )}
 
-        {/* --- STEG 3: Refleksjon --- */}
+        {/* --- STEG 3 --- */}
         {step === 3 && (
           <>
             <h2 className="text-xl font-semibold text-deep-sea mb-4">Steg 3: Refleksjon</h2>
@@ -689,12 +772,15 @@ export default function ReportNewPage() {
                 <button
                   key={val}
                   type="button"
-                  onClick={() => setSpecialConditions(val)}
+                  onClick={() => {
+                    if (isLocked) return;
+                    setSpecialConditions(val);
+                  }}
                   className={`px-5 py-2 rounded-md border font-medium transition-all ${
                     specialConditions === val
                       ? 'bg-deep-sea border-deep-sea text-white'
                       : 'bg-white border-ocean-fog text-blue-sapphire hover:border-deep-sea'
-                  }`}
+                  } ${isLocked ? 'opacity-60 pointer-events-none' : ''}`}
                 >
                   {val}
                 </button>
@@ -704,9 +790,13 @@ export default function ReportNewPage() {
             {specialConditions === 'Ja' && (
               <textarea
                 value={specialComment}
-                onChange={(e) => setSpecialComment(e.target.value)}
+                onChange={(e) => {
+                  if (isLocked) return;
+                  setSpecialComment(e.target.value);
+                }}
                 className="input"
                 placeholder="Beskriv forholdene"
+                disabled={isLocked}
               />
             )}
 
@@ -714,9 +804,13 @@ export default function ReportNewPage() {
               <label className="label">Annen årsak til avvik</label>
               <input
                 value={otherCause}
-                onChange={(e) => setOtherCause(e.target.value)}
+                onChange={(e) => {
+                  if (isLocked) return;
+                  setOtherCause(e.target.value);
+                }}
                 className="input"
                 placeholder="Annet relevant å bemerke"
+                disabled={isLocked}
               />
             </div>
 
@@ -724,9 +818,13 @@ export default function ReportNewPage() {
               <label className="label">Refleksjon fra dommermøte</label>
               <textarea
                 value={reflection}
-                onChange={(e) => setReflection(e.target.value)}
+                onChange={(e) => {
+                  if (isLocked) return;
+                  setReflection(e.target.value);
+                }}
                 className="input"
                 placeholder="Skriv refleksjoner her"
+                disabled={isLocked}
               />
             </div>
 
@@ -751,7 +849,7 @@ export default function ReportNewPage() {
           </>
         )}
 
-        {/* --- STEG 4: Opplasting av protokoller --- */}
+        {/* --- STEG 4 --- */}
         {step === 4 && (
           <>
             <h2 className="text-xl font-semibold text-deep-sea mb-4">
@@ -768,6 +866,7 @@ export default function ReportNewPage() {
               multiple
               onChange={(e) => handleFilesSelected(e.target.files)}
               className="input"
+              disabled={isLocked}
             />
 
             {previewUrls.length > 0 && (
@@ -804,7 +903,7 @@ export default function ReportNewPage() {
           </>
         )}
 
-        {/* --- STEG 5: Oppsummering --- */}
+        {/* --- STEG 5 --- */}
         {step === 5 && (
           <>
             <h2 className="text-xl font-semibold text-deep-sea mb-4">Steg 5: Oppsummering</h2>
@@ -835,12 +934,6 @@ export default function ReportNewPage() {
               <p>
                 <b>Avvik %:</b> {deviation}
               </p>
-
-              {reportId && (
-                <p className="text-xs text-muted">
-                  <b>Utkast-ID:</b> {reportId}
-                </p>
-              )}
             </div>
 
             <h3 className="text-deep-sea font-semibold mt-4">Vurderingspunkter</h3>
@@ -851,19 +944,16 @@ export default function ReportNewPage() {
               </div>
             ))}
 
-            {previewUrls.length > 0 && (
+            {existingImagePaths.length > 0 && (
               <>
-                <h3 className="text-deep-sea font-semibold mt-4">Protokollbilder</h3>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {previewUrls.map((url, idx) => (
-                    <img
-                      key={idx}
-                      src={url}
-                      alt={`Opplasting ${idx + 1}`}
-                      className="rounded-md shadow-md w-full"
-                    />
+                <h3 className="text-deep-sea font-semibold mt-4">Protokollbilder (lagret)</h3>
+                <ul className="text-xs text-muted list-disc pl-5 space-y-1">
+                  {existingImagePaths.map((p) => (
+                    <li key={p} className="break-all">
+                      {p}
+                    </li>
                   ))}
-                </div>
+                </ul>
               </>
             )}
 
@@ -871,7 +961,7 @@ export default function ReportNewPage() {
               <button
                 type="button"
                 className="btn btn-secondary w-full sm:w-auto"
-                onClick={prevStep}
+                onClick={() => setStep(4)}
                 disabled={loading}
               >
                 ← Forrige
@@ -882,7 +972,7 @@ export default function ReportNewPage() {
                   type="button"
                   className="btn btn-secondary w-full sm:w-auto"
                   onClick={handleSaveDraft}
-                  disabled={loading}
+                  disabled={loading || isLocked}
                 >
                   {loading ? 'Lagrer...' : 'Lagre utkast'}
                 </button>
@@ -891,12 +981,18 @@ export default function ReportNewPage() {
                   type="button"
                   className="btn btn-primary w-full sm:w-auto"
                   onClick={handleSubmit}
-                  disabled={loading}
+                  disabled={loading || isLocked}
                 >
                   {loading ? 'Sender...' : 'Send inn rapport'}
                 </button>
               </div>
             </div>
+
+            {isLocked && (
+              <p className="text-xs text-muted mt-3">
+                Denne rapporten er sendt inn og kan ikke redigeres.
+              </p>
+            )}
           </>
         )}
       </div>
