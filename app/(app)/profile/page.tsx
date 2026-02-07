@@ -58,6 +58,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const [observationYears, setObservationYears] = useState<ObservationYearSummary[]>([]);
   const [creatingObservation, setCreatingObservation] = useState(false);
@@ -96,6 +97,8 @@ export default function ProfilePage() {
         setRiderDistrict(profile.rider_district || '');
         setBirthday(profile.birthday || '');
         setJudgeStart(profile.judge_start || '');
+
+        setIsAdmin(profile.role === 'admin' && profile.approval_status === 'approved');
       }
 
       const { data: notificationsData } = await supabase
@@ -503,6 +506,12 @@ export default function ProfilePage() {
             Rediger profil
           </button>
 
+          {isAdmin && (
+            <button onClick={() => router.push('/admin/members')} className="btn btn-primary">
+              Administrer medlemmer
+            </button>
+          )}
+
           <button onClick={() => router.push('/report-new')} className="btn btn-primary">
             Ny dommermøterapport
           </button>
@@ -603,7 +612,31 @@ export default function ProfilePage() {
                         : router.push(`/report/${report.id}`)
                     }
                   >
-                    <div className="flex justify-between items-center gap-4">
+                    {/* MOBIL */}
+                    <div className="md:hidden space-y-2">
+                      {/* Sted får full bredde og wrap */}
+                      <p className="font-medium text-[--deep-sea] whitespace-normal break-words">
+                        {report.location || 'Ukjent sted'}
+                      </p>
+
+                      {/* Stevnedato + status på samme linje */}
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm text-muted">
+                          Stevnedato:{' '}
+                          {report.show_date
+                            ? new Date(report.show_date).toLocaleDateString('no-NO')
+                            : '—'}
+                        </p>
+
+                        <span className={badgeClass(status)}>{badgeText(status)}</span>
+                      </div>
+
+                      {/* Meta under */}
+                      <p className="text-xs text-muted">{reportMetaText(report, status)}</p>
+                    </div>
+
+                    {/* DESKTOP */}
+                    <div className="hidden md:flex justify-between items-center gap-4">
                       <div className="min-w-0">
                         <p className="font-medium text-[--deep-sea] truncate">
                           {report.location || 'Ukjent sted'}

@@ -66,24 +66,16 @@ export default function ObservationYearPage() {
     load();
   }, [yearId]);
 
-  if (loading) {
-    return <p className="p-6">Loading…</p>;
-  }
+  if (loading) return <p className="p-6">Loading…</p>;
+  if (error) return <p className="p-6 text-red-600">{error}</p>;
+  if (!year) return null;
 
-  if (error) {
-    return <p className="p-6 text-red-600">{error}</p>;
-  }
-
-  if (!year) {
-    return null;
-  }
   const isLocked = year.status === 'closed';
 
   const handleDownloadPdf = () => {
     if (!year) return;
 
     const doc = new jsPDF();
-
     let yPos = 15;
 
     doc.setFontSize(16);
@@ -123,61 +115,124 @@ export default function ObservationYearPage() {
     doc.save(`bisittingsskjema_${year.year}.pdf`);
   };
 
+  const handleOpenObservation = (id: string) => {
+    router.push(`/observations/edit/${id}`);
+  };
+
   return (
     <div className="max-w-5xl mx-auto space-y-10">
       <section className="card">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold">Bisitting – {year.year}</h1>
+        {/* 🔹 Header */}
+        <div className="mb-6">
+          <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <h1 className="text-2xl font-semibold">Bisitting – {year.year}</h1>
 
-          {!isLocked && (
-            <button
-              onClick={() => router.push(`/observations/${year.id}/new`)}
-              className="btn btn-primary"
-            >
-              + Registrer ny bisitting
-            </button>
-          )}
+            {!isLocked && (
+              <button
+                onClick={() => router.push(`/observations/${year.id}/new`)}
+                className="btn btn-primary w-full md:w-auto"
+              >
+                + Registrer ny bisitting
+              </button>
+            )}
+          </div>
         </div>
 
         {observations.length === 0 ? (
           <div className="text-gray-500 border rounded p-6">No observations yet.</div>
         ) : (
-          <div className="border rounded overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left p-3">Dato</th>
-                  <th className="text-left p-3">Sted</th>
-                  <th className="text-left p-3">Klasse</th>
-                  <th className="text-left p-3">Antall ekvipasjer</th>
-                  <th className="text-left p-3">Dommer</th>
-                  <th className="text-left p-3">Status</th>
-                  <th className="text-left p-3">Handling</th>
-                </tr>
-              </thead>
-              <tbody>
-                {observations.map((obs) => (
-                  <tr key={obs.id} className="border-t">
-                    <td className="p-3">{obs.date}</td>
-                    <td className="p-3">{obs.location}</td>
-                    <td className="p-3">{obs.class_level}</td>
-                    <td className="p-3">{obs.number_of_horses}</td>
-                    <td className="p-3">{obs.host_name}</td>
-                    <td className="p-3">{OBSERVATION_STATUS_LABELS[obs.status]}</td>
-                    <td className="p-3">
+          <div className="space-y-3">
+            {/* 📱 Mobil: kort */}
+            <div className="md:hidden space-y-3">
+              {observations.map((obs) => {
+                const isApproved = obs.status === 'approved';
+
+                return (
+                  <div key={obs.id} className="border rounded-lg bg-white p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm text-gray-500">{obs.date}</div>
+                        <div className="text-lg font-semibold">{obs.location}</div>
+                        <div className="text-sm text-gray-600">{obs.class_level}</div>
+                      </div>
+
+                      <div className="text-sm font-medium">
+                        {OBSERVATION_STATUS_LABELS[obs.status]}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div className="text-gray-500">Antall</div>
+                      <div className="font-medium">{obs.number_of_horses}</div>
+
+                      <div className="text-gray-500">Dommer</div>
+                      <div className="font-medium">{obs.host_name}</div>
+                    </div>
+
+                    <div className="mt-4">
                       <button
-                        onClick={() => router.push(`/observations/edit/${obs.id}`)}
-                        className="btn btn-secondary btn-sm"
+                        onClick={() => handleOpenObservation(obs.id)}
+                        disabled={isApproved}
+                        className={`btn btn-secondary w-full ${
+                          isApproved ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
                       >
                         Rediger
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 🖥 Desktop: tabell */}
+            <div className="hidden md:block border rounded overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left p-3">Dato</th>
+                      <th className="text-left p-3">Sted</th>
+                      <th className="text-left p-3">Klasse</th>
+                      <th className="text-left p-3">Antall ekvipasjer</th>
+                      <th className="text-left p-3">Dommer</th>
+                      <th className="text-left p-3">Status</th>
+                      <th className="text-left p-3">Handling</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {observations.map((obs) => {
+                      const isApproved = obs.status === 'approved';
+
+                      return (
+                        <tr key={obs.id} className="border-t">
+                          <td className="p-3">{obs.date}</td>
+                          <td className="p-3">{obs.location}</td>
+                          <td className="p-3">{obs.class_level}</td>
+                          <td className="p-3">{obs.number_of_horses}</td>
+                          <td className="p-3">{obs.host_name}</td>
+                          <td className="p-3">{OBSERVATION_STATUS_LABELS[obs.status]}</td>
+                          <td className="p-3">
+                            <button
+                              onClick={() => handleOpenObservation(obs.id)}
+                              disabled={isApproved}
+                              className={`btn btn-secondary btn-sm ${
+                                isApproved ? 'opacity-50 cursor-not-allowed' : ''
+                              }`}
+                            >
+                              Rediger
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
+
         {observations.length > 0 && (
           <div className="mt-6">
             <button onClick={handleDownloadPdf} className="btn btn-primary">
