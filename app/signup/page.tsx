@@ -1,12 +1,10 @@
 'use client';
 
 import { useState, FormEvent } from 'react';
-import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 
 const JUDGE_LEVELS = ['DDA', 'DD1', 'DD2', 'DD3', 'DD4', 'FEI'];
 
-// Bytt/utvid denne listen slik du ønsker (eksempel med norske fylker)
 const RIDER_DISTRICTS = [
   { value: '', label: 'Velg rytterkrets' },
   { value: 'Agder Rytterkrets', label: 'Agder Rytterkrets' },
@@ -28,6 +26,7 @@ const RIDER_DISTRICTS = [
 
 export default function SignupPage() {
   const router = useRouter();
+
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -35,8 +34,6 @@ export default function SignupPage() {
   const [birthday, setBirthday] = useState('');
   const [judgeLevel, setJudgeLevel] = useState('');
   const [judgeStart, setJudgeStart] = useState('');
-
-  // Dropdown-verdi
   const [riderDistrict, setRiderDistrict] = useState('');
 
   const [loading, setLoading] = useState(false);
@@ -47,38 +44,35 @@ export default function SignupPage() {
     setLoading(true);
     setErrorMsg(null);
 
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    if (error) {
-      setErrorMsg(error.message);
-      setLoading(false);
-      return;
-    }
-
-    const user = data.user;
-
-    if (user) {
-      const { error: profileError } = await supabase.from('profiles').insert({
-        user_id: user.id,
-        full_name: fullName,
-        birthday: birthday || null,
-        judge_level: judgeLevel || null,
-        judge_start: judgeStart || null,
-        rider_district: riderDistrict || null,
+    try {
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: fullName,
+          email,
+          password,
+          birthday: birthday || null,
+          judge_level: judgeLevel || null,
+          judge_start: judgeStart || null,
+          rider_district: riderDistrict || null,
+        }),
       });
 
-      if (profileError) {
-        setErrorMsg(profileError.message);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setErrorMsg(json?.error || 'Kunne ikke opprette bruker.');
         setLoading(false);
         return;
       }
-    }
 
-    setLoading(false);
-    router.push('/login');
+      setLoading(false);
+      router.push('/login');
+    } catch (err: any) {
+      setErrorMsg(err?.message ?? 'Ukjent feil');
+      setLoading(false);
+    }
   }
 
   return (
@@ -89,7 +83,6 @@ export default function SignupPage() {
         </h1>
 
         <form onSubmit={handleSignup} className="space-y-4">
-          {/* Fullt navn */}
           <div>
             <label className="label">Fullt navn</label>
             <input
@@ -101,7 +94,6 @@ export default function SignupPage() {
             />
           </div>
 
-          {/* E-post */}
           <div>
             <label className="label">E-post</label>
             <input
@@ -113,7 +105,6 @@ export default function SignupPage() {
             />
           </div>
 
-          {/* Passord */}
           <div>
             <label className="label">Passord</label>
             <input
@@ -125,7 +116,6 @@ export default function SignupPage() {
             />
           </div>
 
-          {/* Fødselsdato */}
           <div>
             <label className="label">Fødselsdato</label>
             <input
@@ -136,7 +126,6 @@ export default function SignupPage() {
             />
           </div>
 
-          {/* Dommernivå */}
           <div>
             <label className="label">Dommernivå</label>
             <select
@@ -153,7 +142,6 @@ export default function SignupPage() {
             </select>
           </div>
 
-          {/* Start som dommer */}
           <div>
             <label className="label">Startet som dommer</label>
             <input
@@ -164,7 +152,6 @@ export default function SignupPage() {
             />
           </div>
 
-          {/* Rytterkrets (dropdown) */}
           <div>
             <label className="label">Rytterkrets</label>
             <select
