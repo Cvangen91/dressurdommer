@@ -10,6 +10,25 @@ import SelectFilter from '@/components/SelectFilter';
 
 const JUDGE_LEVELS = ['DDA', 'DD1', 'DD2', 'DD3', 'DD4', 'FEI'];
 
+const RIDER_DISTRICTS = [
+  { value: '', label: 'Velg rytterkrets' },
+  { value: 'Agder Rytterkrets', label: 'Agder Rytterkrets' },
+  { value: 'Buskerud Rytterkrets', label: 'Buskerud Rytterkrets' },
+  { value: 'Finnmark Rytterkrets', label: 'Finnmark Rytterkrets' },
+  { value: 'Hedmark Rytterkrets', label: 'Hedmark Rytterkrets' },
+  { value: 'Hordaland Rytterkrets', label: 'Hordaland Rytterkrets' },
+  { value: 'Møre og Romsdal Rytterkrets', label: 'Møre og Romsdal Rytterkrets' },
+  { value: 'Nordland Rytterkrets', label: 'Nordland Rytterkrets' },
+  { value: 'Oppland Rytterkrets', label: 'Oppland Rytterkrets' },
+  { value: 'Oslo og Akershus Rytterkrets', label: 'Oslo og Akershus Rytterkrets' },
+  { value: 'Rogaland Rytterkrets', label: 'Rogaland Rytterkrets' },
+  { value: 'Sogn og Fjordane Rytterkrets', label: 'Sogn og Fjordane Rytterkrets' },
+  { value: 'Telemark og Vestfold Rytterregion', label: 'Telemark og Vestfold Rytterregion' },
+  { value: 'Troms Rytterkrets', label: 'Troms Rytterkrets' },
+  { value: 'Trøndelag Rytterkrets', label: 'Trøndelag Rytterkrets' },
+  { value: 'Østfold Rytterkrets', label: 'Østfold Rytterkrets' },
+];
+
 interface Notification {
   id: string;
   title: string;
@@ -456,14 +475,20 @@ export default function ProfilePage() {
 
             <div>
               <label className="label">Rytterkrets</label>
-              <input
-                className="input"
+              <select
                 value={riderDistrict}
                 onChange={(e) => setRiderDistrict(e.target.value)}
-              />
+                className="input"
+              >
+                {RIDER_DISTRICTS.map((d) => (
+                  <option key={d.value || 'empty'} value={d.value}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="label">Fødselsdato</label>
                 <input
