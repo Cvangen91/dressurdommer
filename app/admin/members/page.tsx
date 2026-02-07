@@ -61,8 +61,20 @@ export default function AdminMembersPage() {
 
   async function approve(id: string) {
     const res = await fetch(`/api/admin/members/${id}/approve`, { method: 'POST' });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) return alert(json?.error || 'Kunne ikke godkjenne');
+
+    const text = await res.text();
+    let json: any = {};
+    try {
+      json = JSON.parse(text);
+    } catch {
+      // ignore
+    }
+
+    if (!res.ok) {
+      alert(json?.error || text || 'Kunne ikke godkjenne');
+      return;
+    }
+
     setMembers((prev) => prev.filter((m) => m.id !== id));
   }
 
@@ -72,8 +84,19 @@ export default function AdminMembersPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason: rejectReason }),
     });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) return alert(json?.error || 'Kunne ikke avvise');
+
+    const text = await res.text();
+    let json: any = {};
+    try {
+      json = JSON.parse(text);
+    } catch {
+      // ignore
+    }
+
+    if (!res.ok) {
+      alert(json?.error || text || 'Kunne ikke avvise');
+      return;
+    }
 
     setMembers((prev) => prev.filter((m) => m.id !== id));
     setRejectOpenId(null);
