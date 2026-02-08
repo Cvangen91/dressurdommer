@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { createSupabaseRouteClient } from '@/supabase/lib/route';
 import { createSupabaseServiceClient } from '@/supabase/lib/service';
 
-export async function POST(req: Request, ctx: { params: { id: string } }) {
-  const cookieStore = await cookies();
-  const supabase = createSupabaseRouteClient(cookieStore);
+export async function POST(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> | { id: string } }
+) {
+  const supabase = createSupabaseRouteClient(req);
 
   const {
     data: { user },
@@ -22,8 +23,19 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
     return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
   }
 
-  const body = await req.json().catch(() => ({}));
-  const reason = typeof body?.reason === 'string' ? body.reason.trim() : null;
+  const params = await Promise.resolve(ctx.params);
+  const memberId = params.id;
+
+  if (!memberId) {
+    return NextResponse.json({ error: 'Missing member id' }, { status: 400 });
+  }
+
+  const body = (await req.json().catch(() => ({}))) as {
+    reason?: string;
+  };
+
+  const reason =
+    typeof body.reason === 'string' && body.reason.trim().length > 0 ? body.reason.trim() : null;
 
   const service = createSupabaseServiceClient();
   const { error } = await service
@@ -34,7 +46,7 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
       reviewed_by: user.id,
       rejection_reason: reason && reason.length > 0 ? reason : null,
     })
-    .eq('id', ctx.params.id);
+    .eq('id', memberId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
