@@ -46,9 +46,9 @@ interface Report {
   location: string | null;
   created_at: string;
   updated_at: string | null;
-  status: JudgeMeetingReportStatus | null; // null = gamle rader uten status -> behandles som draft
+  status: JudgeMeetingReportStatus | null;
   submitted_at: string | null;
-  payload?: { draft?: boolean | null } | null; // fallback for eldre data
+  payload?: { draft?: boolean | null } | null;
 }
 
 interface ObservationYearSummary {
@@ -59,6 +59,8 @@ interface ObservationYearSummary {
 }
 
 type ReportSort = 'date_desc' | 'date_asc';
+
+type ApprovalStatus = 'pending' | 'approved' | 'rejected' | null;
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -72,12 +74,14 @@ export default function ProfilePage() {
   const [birthday, setBirthday] = useState('');
   const [judgeStart, setJudgeStart] = useState('');
 
+  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
 
   const [observationYears, setObservationYears] = useState<ObservationYearSummary[]>([]);
   const [creatingObservation, setCreatingObservation] = useState(false);
@@ -88,7 +92,8 @@ export default function ProfilePage() {
   const [currentReportPage, setCurrentReportPage] = useState(1);
   const REPORTS_PER_PAGE = 6;
 
-  // 🔹 Hent profil og rapporter
+  const isApproved = approvalStatus === 'approved';
+
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
@@ -117,7 +122,11 @@ export default function ProfilePage() {
         setBirthday(profile.birthday || '');
         setJudgeStart(profile.judge_start || '');
 
+        setApprovalStatus((profile.approval_status as ApprovalStatus) ?? null);
         setIsAdmin(profile.role === 'admin' && profile.approval_status === 'approved');
+      } else {
+        setApprovalStatus(null);
+        setIsAdmin(false);
       }
 
       const { data: notificationsData } = await supabase
@@ -129,7 +138,14 @@ export default function ProfilePage() {
 
       if (notificationsData) setNotifications(notificationsData as Notification[]);
 
-      // ✅ Rapporter: hent status + submitted_at + updated_at (+ payload som fallback)
+      // Ikke hent flyt-data hvis user ikke er approved (unngår “klikk men får ikke lagret”-følelsen)
+      if (!profile || profile.approval_status !== 'approved') {
+        setReports([]);
+        setObservationYears([]);
+        setLoading(false);
+        return;
+      }
+
       const { data: reportsData } = await supabase
         .from('judge_meeting_reports')
         .select('id, show_date, location, created_at, updated_at, status, submitted_at, payload')
@@ -178,7 +194,6 @@ export default function ProfilePage() {
     fetchData();
   }, [router]);
 
-  // 🔹 Lagre endringer inkl. e-post
   async function handleSave(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -212,8 +227,10 @@ export default function ProfilePage() {
     setSaving(false);
   }
 
-  // ✅ Ny bisitting: sørg for årlig skjema og gå direkte til new observation
   async function handleNewObservation() {
+    // Hard stop i UI dersom ikke godkjent
+    if (!isApproved) return;
+
     try {
       setCreatingObservation(true);
       setMessage(null);
@@ -282,24 +299,20 @@ export default function ProfilePage() {
     }
   }
 
-  // ✅ Status: kun "utkast" eller "sendt inn"
   const getReportStatus = (r: Report): JudgeMeetingReportStatus => {
     if (r.status === 'submitted') return 'submitted';
     if (r.status === 'draft') return 'draft';
 
-    // fallback for gamle rader uten status: bruk payload.draft hvis den finnes
     if (r.payload && typeof r.payload.draft === 'boolean') {
       return r.payload.draft ? 'draft' : 'submitted';
     }
 
-    // default: utkast
     return 'draft';
   };
 
   const badgeText = (status: JudgeMeetingReportStatus) =>
     status === 'submitted' ? 'Sendt inn' : 'Utkast';
 
-  // ✅ Farger: utkast = oransje, sendt inn = grønn
   const badgeClass = (status: JudgeMeetingReportStatus) =>
     status === 'submitted' ? 'badge badge-submitted' : 'badge badge-pending';
 
@@ -315,7 +328,6 @@ export default function ProfilePage() {
     return `Sist lagret: ${fmt(when)}`;
   };
 
-  // ✅ Rapporter: filter + sort i UI
   const filteredSortedReports = useMemo(() => {
     const q = reportSearch.trim().toLowerCase();
 
@@ -347,7 +359,6 @@ export default function ProfilePage() {
     });
   }, [reports, reportSearch, reportSort]);
 
-  // ✅ Rapporter: pagination
   const totalReportPages = Math.max(1, Math.ceil(filteredSortedReports.length / REPORTS_PER_PAGE));
 
   const pagedReports = useMemo(() => {
@@ -356,14 +367,25 @@ export default function ProfilePage() {
     return filteredSortedReports.slice(start, start + REPORTS_PER_PAGE);
   }, [filteredSortedReports, currentReportPage, totalReportPages]);
 
-  // Reset til side 1 når søk/sort endres
   useEffect(() => {
     setCurrentReportPage(1);
   }, [reportSearch, reportSort]);
 
+  const disabledBtnClass = 'opacity-50 cursor-not-allowed pointer-events-none select-none';
+
+  const approvalBanner =
+    approvalStatus && approvalStatus !== 'approved' ? (
+      <div className="mt-4 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3">
+        <p className="text-sm font-medium text-orange-800">Kontoen din er ikke godkjent enda.</p>
+        <p className="text-xs text-orange-700 mt-1">
+          Vent litt – du får tilgang til å opprette dommermøterapporter og bisitting når kontoen er
+          godkjent.
+        </p>
+      </div>
+    ) : null;
+
   return (
     <div className="max-w-5xl mx-auto space-y-10">
-      {/* 🔹 PROFILSEKSJON */}
       <section className="card">
         {!editing ? (
           <>
@@ -372,6 +394,7 @@ export default function ProfilePage() {
                 <h1 className="text-2xl font-semibold text-[--deep-sea] mb-2">
                   {fullName || 'Ukjent dommer'}
                 </h1>
+
                 <div className="space-y-1 text-sm">
                   <p>
                     <span className="font-medium">E-post:</span> {email || '—'}
@@ -395,6 +418,8 @@ export default function ProfilePage() {
                     </p>
                   )}
                 </div>
+
+                {approvalBanner}
               </div>
 
               <div className="min-w-[260px]">
@@ -537,14 +562,20 @@ export default function ProfilePage() {
             </button>
           )}
 
-          <button onClick={() => router.push('/report-new')} className="btn btn-primary">
+          <button
+            onClick={() => router.push('/report-new')}
+            className={`btn btn-primary ${!isApproved ? disabledBtnClass : ''}`}
+            disabled={!isApproved}
+            title={!isApproved ? 'Kontoen må godkjennes før du kan opprette rapport.' : undefined}
+          >
             Ny dommermøterapport
           </button>
 
           <button
             onClick={handleNewObservation}
-            className="btn btn-primary"
-            disabled={creatingObservation}
+            className={`btn btn-primary ${!isApproved || creatingObservation ? disabledBtnClass : ''}`}
+            disabled={!isApproved || creatingObservation}
+            title={!isApproved ? 'Kontoen må godkjennes før du kan opprette bisitting.' : undefined}
           >
             {creatingObservation ? 'Oppretter...' : 'Ny bisitting'}
           </button>
@@ -554,7 +585,11 @@ export default function ProfilePage() {
       <section className="card">
         <h2 className="text-xl font-semibold text[--deep-sea] mb-4">Dine bisittingsskjemaer</h2>
 
-        {observationYears.length === 0 ? (
+        {!isApproved ? (
+          <p className="text-muted">
+            Du får tilgang til bisittingsskjemaer når kontoen er godkjent.
+          </p>
+        ) : observationYears.length === 0 ? (
           <p className="text-muted">Du har ikke registrert noen bisittinger enda.</p>
         ) : (
           <div className="space-y-4">
@@ -590,7 +625,6 @@ export default function ProfilePage() {
         )}
       </section>
 
-      {/* 🔹 RAPPORTER */}
       <section className="card">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4">
           <h2 className="text-xl font-semibold text-[--deep-sea]">Dine dommermøterapporter</h2>
@@ -617,7 +651,9 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {loading ? (
+        {!isApproved ? (
+          <p className="text-muted">Du får tilgang til rapporter når kontoen er godkjent.</p>
+        ) : loading ? (
           <p className="text-muted">Laster rapporter...</p>
         ) : filteredSortedReports.length === 0 ? (
           <p className="text-muted">Ingen rapporter matcher søket.</p>
@@ -637,14 +673,11 @@ export default function ProfilePage() {
                         : router.push(`/report/${report.id}`)
                     }
                   >
-                    {/* MOBIL */}
                     <div className="md:hidden space-y-2">
-                      {/* Sted får full bredde og wrap */}
                       <p className="font-medium text-[--deep-sea] whitespace-normal break-words">
                         {report.location || 'Ukjent sted'}
                       </p>
 
-                      {/* Stevnedato + status på samme linje */}
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-sm text-muted">
                           Stevnedato:{' '}
@@ -656,11 +689,9 @@ export default function ProfilePage() {
                         <span className={badgeClass(status)}>{badgeText(status)}</span>
                       </div>
 
-                      {/* Meta under */}
                       <p className="text-xs text-muted">{reportMetaText(report, status)}</p>
                     </div>
 
-                    {/* DESKTOP */}
                     <div className="hidden md:flex justify-between items-center gap-4">
                       <div className="min-w-0">
                         <p className="font-medium text-[--deep-sea] truncate">

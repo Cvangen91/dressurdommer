@@ -2,9 +2,8 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createSupabaseRouteClient } from '@/supabase/lib/route';
 
-export async function GET() {
-  const cookieStore = await cookies();
-  const supabase = createSupabaseRouteClient(cookieStore);
+export async function GET(req: Request) {
+  const supabase = createSupabaseRouteClient(req);
 
   const {
     data: { user },
