@@ -61,6 +61,11 @@ export default function LoginPage() {
               placeholder="••••••••"
               required
             />
+            <div className="text-right mt-1">
+              <a href="/forgot-password" className="text-sm text-[--deep-sea] hover:underline">
+                Glemt passord?
+              </a>
+            </div>
           </div>
 
           {errorMsg && <p className="text-red-600 text-sm">{errorMsg}</p>}
