@@ -4,9 +4,10 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import Image from 'next/image';
+import type { User } from '@supabase/supabase-js';
 
 export default function HomePage() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
     const getUser = async () => {
@@ -109,6 +110,41 @@ export default function HomePage() {
                 deg videre.
               </p>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* NEWS SECTION */}
+      <section className="py-8 md:py-12 px-4 md:px-12">
+        <div className="max-w-6xl mx-auto">
+          <div className="card p-5 md:p-7 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <h2 className="text-lg sm:text-xl md:text-2xl font-semibold text-[--deep-sea]">
+                Nyeste oppdateringer
+              </h2>
+              <span className="text-xs sm:text-sm text-gray-500">Oppdatert: 30.03.2026</span>
+            </div>
+
+            <p className="text-gray-700 text-sm sm:text-base leading-relaxed">
+              Større oppdatering på utfylling av dommermøterapporter basert på tilbakemeldinger fra
+              bruker er gjennomført. I tillegg er det laget funksjon for å resette passord.
+            </p>
+
+            <ul className="list-disc pl-5 text-gray-700 text-sm sm:text-base space-y-1">
+              <li>
+                Endret fra dommer 1,2,3 til Plassering til dommeren og mulighet for å legge til
+                opptil 5 dommere
+              </li>
+              <li>
+                Ved lagring kan man nå velge å legge til ny ekvipasje fra samme klasse og starte med
+                en del felter utfylt
+              </li>
+              <li>Plassering i klassen og antall starter i klassen er lagt til som informasjon</li>
+              <li>
+                På profilsiden vil nå flere rapporter fra samme stevne samles under et stevne, for
+                bedre oversikt
+              </li>
+            </ul>
           </div>
         </div>
       </section>
