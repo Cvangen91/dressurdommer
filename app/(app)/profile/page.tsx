@@ -42,13 +42,30 @@ type JudgeMeetingReportStatus = 'draft' | 'submitted';
 
 interface Report {
   id: string;
+  user_id: string;
   show_date: string | null;
   location: string | null;
+  class_level: string | null;
+  rider_name: string | null;
+  horse_name: string | null;
   created_at: string;
   updated_at: string | null;
   status: JudgeMeetingReportStatus | null;
   submitted_at: string | null;
-  payload?: { draft?: boolean | null } | null;
+  payload?: {
+    draft?: boolean | null;
+    classLevel?: string | null;
+    riderName?: string | null;
+    horseName?: string | null;
+  } | null;
+}
+
+interface GroupedReport {
+  location: string;
+  dates: string[];
+  minDate: Date;
+  maxDate: Date;
+  reports: Report[];
 }
 
 interface ObservationYearSummary {
@@ -76,6 +93,7 @@ export default function ProfilePage() {
 
   const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
@@ -90,6 +108,7 @@ export default function ProfilePage() {
   const [reportSearch, setReportSearch] = useState('');
   const [reportSort, setReportSort] = useState<ReportSort>('date_desc');
   const [currentReportPage, setCurrentReportPage] = useState(1);
+  const [expandedLocations, setExpandedLocations] = useState<Set<string>>(new Set());
   const REPORTS_PER_PAGE = 6;
 
   const isApproved = approvalStatus === 'approved';
@@ -106,6 +125,8 @@ export default function ProfilePage() {
         router.push('/login');
         return;
       }
+
+      setCurrentUserId(user.id);
 
       setEmail(user.email ?? '');
 
@@ -146,14 +167,54 @@ export default function ProfilePage() {
         return;
       }
 
-      const { data: reportsData } = await supabase
-        .from('judge_meeting_reports')
-        .select('id, show_date, location, created_at, updated_at, status, submitted_at, payload')
-        .eq('user_id', user.id)
-        .order('show_date', { ascending: false })
-        .order('created_at', { ascending: false });
+      const reportSelect =
+        'id, user_id, show_date, location, created_at, updated_at, status, submitted_at, payload';
 
-      if (reportsData) setReports(reportsData as Report[]);
+      const [{ data: ownReports }, { data: panelReports }, { data: judgeArrayReports }] =
+        await Promise.all([
+          supabase.from('judge_meeting_reports').select(reportSelect).eq('user_id', user.id),
+          supabase
+            .from('judge_meeting_reports')
+            .select(reportSelect)
+            .or(`judge_1_id.eq.${user.id},judge_2_id.eq.${user.id},judge_3_id.eq.${user.id}`),
+          supabase
+            .from('judge_meeting_reports')
+            .select(reportSelect)
+            .contains('judge_user_ids', [user.id]),
+        ]);
+
+      const mapReport = (r: Partial<Report> & { id?: string | null }): Report => ({
+        id: r.id ?? '',
+        user_id: r.user_id ?? '',
+        show_date: r.show_date ?? null,
+        location: r.location ?? null,
+        class_level: r.payload?.classLevel ?? null,
+        rider_name: r.payload?.riderName ?? null,
+        horse_name: r.payload?.horseName ?? null,
+        created_at: r.created_at ?? '',
+        updated_at: r.updated_at ?? null,
+        status: r.status ?? null,
+        submitted_at: r.submitted_at ?? null,
+        payload: r.payload ?? null,
+      });
+
+      const merged = new Map<string, Report>();
+      [...(ownReports ?? []), ...(panelReports ?? []), ...(judgeArrayReports ?? [])].forEach(
+        (r) => {
+          const row = mapReport(r as Partial<Report> & { id?: string | null });
+          if (row?.id) merged.set(row.id, row);
+        }
+      );
+
+      const mergedReports = Array.from(merged.values()).sort((a, b) => {
+        const aDate = Date.parse(a.show_date || a.updated_at || a.created_at || '');
+        const bDate = Date.parse(b.show_date || b.updated_at || b.created_at || '');
+        const safeA = Number.isNaN(aDate) ? 0 : aDate;
+        const safeB = Number.isNaN(bDate) ? 0 : bDate;
+        return safeB - safeA;
+      });
+
+      setReports(mergedReports);
 
       const { data: obsYears } = await supabase
         .from('observation_year')
@@ -171,9 +232,16 @@ export default function ProfilePage() {
         .order('year', { ascending: false });
 
       if (obsYears) {
-        const summaries = (obsYears as any[]).map((y: any) => {
+        const summaries = (
+          obsYears as Array<{
+            id: string;
+            year: number;
+            status: string;
+            observations?: Array<{ date: string }>;
+          }>
+        ).map((y) => {
           const dates = (y.observations ?? [])
-            .map((o: any) => o.date)
+            .map((o: { date: string }) => o.date)
             .sort()
             .reverse();
 
@@ -328,6 +396,55 @@ export default function ProfilePage() {
     return `Sist lagret: ${fmt(when)}`;
   };
 
+  // Gruppering av rapporter etter lokasjon
+  const groupReportsByLocation = (reps: Report[]): GroupedReport[] => {
+    const grouped: { [key: string]: Report[] } = {};
+
+    reps.forEach((rep) => {
+      const loc = rep.location || 'Ukjent sted';
+      if (!grouped[loc]) grouped[loc] = [];
+      grouped[loc].push(rep);
+    });
+
+    return Object.entries(grouped).map(([location, locationReports]) => {
+      const dates = locationReports
+        .map((r) => r.show_date)
+        .filter((d) => d)
+        .map((d) => new Date(d!))
+        .sort((a, b) => a.getTime() - b.getTime());
+
+      const minDate = dates.length > 0 ? dates[0] : new Date();
+      const maxDate = dates.length > 0 ? dates[dates.length - 1] : new Date();
+      const uniqueDates = Array.from(new Set(dates.map((d) => d.toISOString().split('T')[0])));
+
+      return {
+        location,
+        dates: uniqueDates,
+        minDate,
+        maxDate,
+        reports: locationReports,
+      };
+    });
+  };
+
+  const formatDateRange = (minDate: Date, maxDate: Date): string => {
+    const fmt = (d: Date) => d.toLocaleDateString('no-NO');
+    if (minDate.toDateString() === maxDate.toDateString()) {
+      return fmt(minDate);
+    }
+    return `${fmt(minDate)} - ${fmt(maxDate)}`;
+  };
+
+  const toggleLocation = (location: string) => {
+    const updated = new Set(expandedLocations);
+    if (updated.has(location)) {
+      updated.delete(location);
+    } else {
+      updated.add(location);
+    }
+    setExpandedLocations(updated);
+  };
+
   const filteredSortedReports = useMemo(() => {
     const q = reportSearch.trim().toLowerCase();
 
@@ -351,12 +468,20 @@ export default function ProfilePage() {
       );
     };
 
-    return [...filtered].sort((a, b) => {
+    const sorted = [...filtered].sort((a, b) => {
       const aPrimary = primarySortValue(a);
       const bPrimary = primarySortValue(b);
 
       return reportSort === 'date_desc' ? bPrimary - aPrimary : aPrimary - bPrimary;
     });
+
+    // Gruppering basert på lokasjon, sortert etter dato
+    const grouped = groupReportsByLocation(sorted);
+    return grouped.sort((a, b) =>
+      reportSort === 'date_desc'
+        ? b.maxDate.getTime() - a.maxDate.getTime()
+        : a.maxDate.getTime() - b.maxDate.getTime()
+    );
   }, [reports, reportSearch, reportSort]);
 
   const totalReportPages = Math.max(1, Math.ceil(filteredSortedReports.length / REPORTS_PER_PAGE));
@@ -660,58 +785,111 @@ export default function ProfilePage() {
         ) : (
           <>
             <div className="space-y-4">
-              {pagedReports.map((report) => {
-                const status = getReportStatus(report);
+              {pagedReports.map((group) => {
+                const isExpanded = expandedLocations.has(group.location);
 
                 return (
-                  <div
-                    key={report.id}
-                    className="card cursor-pointer hover:shadow-lg transition-shadow"
-                    onClick={() =>
-                      status === 'draft'
-                        ? router.push(`/report/edit/${report.id}`)
-                        : router.push(`/report/${report.id}`)
-                    }
-                  >
-                    <div className="md:hidden space-y-2">
-                      <p className="font-medium text-[--deep-sea] whitespace-normal break-words">
-                        {report.location || 'Ukjent sted'}
-                      </p>
+                  <div key={group.location}>
+                    {/* Stevnegruppe header - klikkbar for å ekspandere */}
+                    <div
+                      className="card cursor-pointer hover:shadow-lg transition-shadow"
+                      onClick={() => toggleLocation(group.location)}
+                    >
+                      <div className="md:hidden space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">{isExpanded ? '▼' : '▶'}</span>
+                          <p className="font-medium text-[--deep-sea] whitespace-normal break-words flex-1">
+                            {group.location}
+                          </p>
+                        </div>
 
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm text-muted">
-                          Stevnedato:{' '}
-                          {report.show_date
-                            ? new Date(report.show_date).toLocaleDateString('no-NO')
-                            : '—'}
+                        <p className="text-sm text-muted ml-6">
+                          {formatDateRange(group.minDate, group.maxDate)}
                         </p>
-
-                        <span className={badgeClass(status)}>{badgeText(status)}</span>
-                      </div>
-
-                      <p className="text-xs text-muted">{reportMetaText(report, status)}</p>
-                    </div>
-
-                    <div className="hidden md:flex justify-between items-center gap-4">
-                      <div className="min-w-0">
-                        <p className="font-medium text-[--deep-sea] truncate">
-                          {report.location || 'Ukjent sted'}
-                        </p>
-                        <p className="text-sm text-muted">
-                          Stevnedato:{' '}
-                          {report.show_date
-                            ? new Date(report.show_date).toLocaleDateString('no-NO')
-                            : '—'}
+                        <p className="text-xs text-muted ml-6">
+                          {group.reports.length} rapport{group.reports.length !== 1 ? 'er' : ''}
                         </p>
                       </div>
 
-                      <div className="flex flex-col items-end gap-2 shrink-0">
-                        <span className={badgeClass(status)}>{badgeText(status)}</span>
-                        <p className="text-xs text-muted whitespace-nowrap">
-                          {reportMetaText(report, status)}
-                        </p>
+                      <div className="hidden md:flex justify-between items-center gap-4">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-lg shrink-0">{isExpanded ? '▼' : '▶'}</span>
+                          <div className="min-w-0">
+                            <p className="font-medium text-[--deep-sea] truncate">
+                              {group.location}
+                            </p>
+                            <p className="text-sm text-muted">
+                              {formatDateRange(group.minDate, group.maxDate)} •{' '}
+                              {group.reports.length} rapport{group.reports.length !== 1 ? 'er' : ''}
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     </div>
+
+                    {/* Utvidbar liste med ekvipasjer */}
+                    {isExpanded && (
+                      <div className="space-y-2 mt-2 ml-4">
+                        {group.reports.map((report) => {
+                          const status = getReportStatus(report);
+                          const canEditDraft =
+                            status === 'draft' && report.user_id === currentUserId;
+
+                          return (
+                            <div
+                              key={report.id}
+                              className="card cursor-pointer hover:shadow-md transition-shadow bg-slate-50"
+                              onClick={() =>
+                                canEditDraft
+                                  ? router.push(`/report/edit/${report.id}`)
+                                  : router.push(`/report/${report.id}`)
+                              }
+                            >
+                              <div className="md:hidden space-y-2">
+                                <p className="font-medium text-[--deep-sea]">
+                                  {report.class_level || '—'} • {report.rider_name || '—'}
+                                </p>
+                                <p className="text-sm text-muted">
+                                  Hest: {report.horse_name || '—'}
+                                </p>
+
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-xs text-muted">
+                                    {report.show_date
+                                      ? new Date(report.show_date).toLocaleDateString('no-NO')
+                                      : '—'}
+                                  </p>
+
+                                  <span className={badgeClass(status)}>{badgeText(status)}</span>
+                                </div>
+
+                                <p className="text-xs text-muted">
+                                  {reportMetaText(report, status)}
+                                </p>
+                              </div>
+
+                              <div className="hidden md:flex justify-between items-center gap-4">
+                                <div className="min-w-0">
+                                  <p className="font-medium text-[--deep-sea]">
+                                    {report.class_level || '—'} • {report.rider_name || '—'}
+                                  </p>
+                                  <p className="text-sm text-muted">
+                                    Hest: {report.horse_name || '—'}
+                                  </p>
+                                </div>
+
+                                <div className="flex flex-col items-end gap-2 shrink-0">
+                                  <span className={badgeClass(status)}>{badgeText(status)}</span>
+                                  <p className="text-xs text-muted whitespace-nowrap">
+                                    {reportMetaText(report, status)}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}

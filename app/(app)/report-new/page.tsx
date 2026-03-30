@@ -3,8 +3,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 
 type JudgeSuggestion = { user_id: string; full_name: string };
+type JudgePosition = 'C' | 'M' | 'H' | 'B' | 'E';
+type JudgeEntry = {
+  position: JudgePosition;
+  name: string;
+  user_id?: string | null;
+  percent?: number | '';
+  resultNumber?: number | '';
+};
+type PersistedJudgeEntry = {
+  position: JudgePosition;
+  name: string;
+  user_id: string | null;
+  percent?: number | null;
+  resultNumber?: number | null;
+};
+
+const JUDGE_POSITIONS: JudgePosition[] = ['C', 'M', 'H', 'B', 'E'];
 
 export default function ReportNewPage() {
   const router = useRouter();
@@ -12,49 +30,107 @@ export default function ReportNewPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // ✅ Viktig: vi oppretter rapport tidlig og oppdaterer den videre.
-  // Da blir "Lagre utkast" en UPDATE (ikke ny INSERT hver gang),
-  // og du kan fortsette å redigere samme rapport.
   const [reportId, setReportId] = useState<string | null>(null);
 
   // --- STEG 1: Grunninfo ---
   const [showDate, setShowDate] = useState('');
   const [location, setLocation] = useState('');
-  const [judge1, setJudge1] = useState('');
-  const [judge2, setJudge2] = useState('');
-  const [judge3, setJudge3] = useState('');
+  const [numStartersClass, setNumStartersClass] = useState<number | ''>('');
+  const [classPlacementTotal, setClassPlacementTotal] = useState<number | ''>('');
+  const [judges, setJudges] = useState<JudgeEntry[]>([
+    { position: 'C', name: '', user_id: null, percent: '', resultNumber: '' },
+  ]);
   const [classLevel, setClassLevel] = useState('');
   const [riderName, setRiderName] = useState('');
   const [horseName, setHorseName] = useState('');
-  const [totalPercent, setTotalPercent] = useState<number | ''>('');
-  const [highestPercent, setHighestPercent] = useState<number | ''>('');
-  const [lowestPercent, setLowestPercent] = useState<number | ''>('');
+  const judgePercentValues = useMemo(
+    () =>
+      judges
+        .map((j) => j.percent)
+        .filter((value): value is number => typeof value === 'number' && Number.isFinite(value)),
+    [judges]
+  );
+
+  const totalPercent =
+    judgePercentValues.length > 0
+      ? judgePercentValues.reduce((sum, value) => sum + value, 0) / judgePercentValues.length
+      : '';
+
+  const highestPercent = judgePercentValues.length > 0 ? Math.max(...judgePercentValues) : '';
+  const lowestPercent = judgePercentValues.length > 0 ? Math.min(...judgePercentValues) : '';
 
   const deviation =
     highestPercent !== '' && lowestPercent !== ''
-      ? (Number(highestPercent) - Number(lowestPercent)).toFixed(2)
+      ? (Number(highestPercent) - Number(lowestPercent)).toFixed(3)
       : '';
 
-  // --- Dropdown: dommer-søk (kan fortsatt skrive fritekst) ---
+  const formatPercent = (value: number | string | '' | null | undefined) => {
+    if (value === '' || value === null || value === undefined) return '—';
+    const numeric = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(numeric) ? numeric.toFixed(3) : '—';
+  };
+
+  // --- Dropdown: dommer-søk ---
   const [judgeSuggestions, setJudgeSuggestions] = useState<JudgeSuggestion[]>([]);
-  const [activeJudgeField, setActiveJudgeField] = useState<1 | 2 | 3 | null>(null);
+  const [activeJudgeIndex, setActiveJudgeIndex] = useState<number | null>(null);
   const [showJudgeDropdown, setShowJudgeDropdown] = useState(false);
   const judgeDropdownRef = useRef<HTMLDivElement | null>(null);
 
+  const searchJudgeSuggestions = async (query: string) => {
+    const q = query.trim();
+    if (q.length < 1) {
+      setJudgeSuggestions([]);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/judges/search?q=${encodeURIComponent(q)}`);
+      if (!res.ok) {
+        setJudgeSuggestions([]);
+        return;
+      }
+
+      const payload = (await res.json()) as { judges?: JudgeSuggestion[] };
+      setJudgeSuggestions(payload.judges ?? []);
+    } catch {
+      setJudgeSuggestions([]);
+    }
+  };
+
   useEffect(() => {
     const loadJudges = async () => {
-      const { data } = await supabase
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      const { data: me } = await supabase
         .from('profiles')
         .select('user_id, full_name')
-        .not('full_name', 'is', null);
+        .eq('user_id', user.id)
+        .maybeSingle();
 
-      if (data) setJudgeSuggestions(data as JudgeSuggestion[]);
+      if (!me?.full_name) return;
+
+      setJudges((prev) => {
+        const cIndex = prev.findIndex((j) => j.position === 'C');
+        if (cIndex === -1) {
+          return [{ position: 'C', name: me.full_name, user_id: me.user_id }, ...prev];
+        }
+
+        const cJudge = prev[cIndex];
+        if (cJudge.name.trim()) return prev;
+
+        const next = [...prev];
+        next[cIndex] = { ...cJudge, name: me.full_name, user_id: me.user_id };
+        return next;
+      });
     };
 
     loadJudges();
   }, []);
 
-  // Klikk utenfor-lukking
   useEffect(() => {
     const onMouseDown = (e: MouseEvent) => {
       if (!showJudgeDropdown) return;
@@ -63,7 +139,7 @@ export default function ReportNewPage() {
 
       if (e.target instanceof Node && !el.contains(e.target)) {
         setShowJudgeDropdown(false);
-        setActiveJudgeField(null);
+        setActiveJudgeIndex(null);
       }
     };
 
@@ -72,22 +148,67 @@ export default function ReportNewPage() {
   }, [showJudgeDropdown]);
 
   const activeJudgeValue = useMemo(() => {
-    if (activeJudgeField === 1) return judge1;
-    if (activeJudgeField === 2) return judge2;
-    if (activeJudgeField === 3) return judge3;
-    return '';
-  }, [activeJudgeField, judge1, judge2, judge3]);
+    if (activeJudgeIndex === null) return '';
+    return judges[activeJudgeIndex]?.name ?? '';
+  }, [activeJudgeIndex, judges]);
 
   const filteredJudgeSuggestions = useMemo(() => {
     const q = activeJudgeValue.trim().toLowerCase();
-    if (q.length < 2) return [];
-    return judgeSuggestions.filter((j) => j.full_name.toLowerCase().includes(q)).slice(0, 20);
+    if (q.length < 1) return [];
+    return judgeSuggestions.filter((j) => j.full_name.toLowerCase().includes(q));
   }, [activeJudgeValue, judgeSuggestions]);
 
-  const setJudgeValue = (field: 1 | 2 | 3, value: string) => {
-    if (field === 1) setJudge1(value);
-    if (field === 2) setJudge2(value);
-    if (field === 3) setJudge3(value);
+  const updateJudgeName = (index: number, value: string) => {
+    setJudges((prev) =>
+      prev.map((j, i) => (i === index ? { ...j, name: value, user_id: null } : j))
+    );
+  };
+
+  const updateJudgePercent = (index: number, value: number | '') => {
+    setJudges((prev) => prev.map((j, i) => (i === index ? { ...j, percent: value } : j)));
+  };
+
+  const updateJudgeResultNumber = (index: number, value: number | '') => {
+    setJudges((prev) => prev.map((j, i) => (i === index ? { ...j, resultNumber: value } : j)));
+  };
+
+  const updateJudgePosition = (index: number, position: JudgePosition) => {
+    setJudges((prev) => prev.map((j, i) => (i === index ? { ...j, position } : j)));
+  };
+
+  const getAvailablePositionsForIndex = (index: number): JudgePosition[] => {
+    const usedByOthers = judges.filter((_, i) => i !== index).map((j) => j.position);
+
+    return JUDGE_POSITIONS.filter(
+      (position) => position === judges[index]?.position || !usedByOthers.includes(position)
+    );
+  };
+
+  const addJudge = () => {
+    if (judges.length >= 5) return;
+
+    const used = judges.map((j) => j.position);
+    const nextPosition = JUDGE_POSITIONS.find((p) => !used.includes(p));
+
+    if (!nextPosition) return;
+
+    setJudges((prev) => [
+      ...prev,
+      { position: nextPosition, name: '', user_id: null, percent: '', resultNumber: '' },
+    ]);
+  };
+
+  const removeJudge = (index: number) => {
+    if (index === 0) return; // C skal alltid finnes
+    setJudges((prev) => prev.filter((_, i) => i !== index));
+    if (activeJudgeIndex !== null) {
+      if (activeJudgeIndex === index) {
+        setActiveJudgeIndex(null);
+        setShowJudgeDropdown(false);
+      } else if (activeJudgeIndex > index) {
+        setActiveJudgeIndex(activeJudgeIndex - 1);
+      }
+    }
   };
 
   // --- STEG 2: Punkter ---
@@ -118,20 +239,23 @@ export default function ReportNewPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
 
-  // Navigasjon
   const nextStep = () => setStep((s) => Math.min(5, s + 1));
   const prevStep = () => setStep((s) => Math.max(1, s - 1));
 
-  // Finn dommer-id (returnerer null om navnet ikke finnes)
   async function findJudgeIdByName(name: string) {
     const clean = name.trim();
     if (!clean) return null;
 
-    const { data } = await supabase.from('profiles').select('user_id').ilike('full_name', clean);
-    return (data as any)?.[0]?.user_id || null;
+    const { data } = await supabase
+      .from('profiles')
+      .select('user_id')
+      .ilike('full_name', clean)
+      .limit(1);
+
+    const rows = data as Array<{ user_id: string }> | null;
+    return rows?.[0]?.user_id ?? null;
   }
 
-  // Last opp bilder til Supabase (lagrer path/filnavn)
   async function uploadImages(userId: string) {
     if (!selectedFiles.length) return [];
 
@@ -151,15 +275,26 @@ export default function ReportNewPage() {
     return paths;
   }
 
-  // ✅ Bygg payload konsistent ett sted
-  const buildPayload = (extra?: Record<string, any>) => ({
+  const buildPayload = (extra?: Record<string, unknown>) => ({
     classLevel,
     riderName,
     horseName,
+    numStartersClass: numStartersClass === '' ? null : Number(numStartersClass),
+    classPlacementTotal: classPlacementTotal === '' ? null : Number(classPlacementTotal),
     totalPercent: totalPercent === '' ? null : Number(totalPercent),
     highestPercent: highestPercent === '' ? null : Number(highestPercent),
     lowestPercent: lowestPercent === '' ? null : Number(lowestPercent),
     deviation: deviation === '' ? null : deviation,
+    judgePercents: judges.reduce(
+      (acc, judge) => {
+        if (typeof judge.percent === 'number' && Number.isFinite(judge.percent)) {
+          acc[judge.position] = judge.percent;
+        }
+        return acc;
+      },
+      {} as Partial<Record<JudgePosition, number>>
+    ),
+    judges,
     scores,
     comments,
     specialConditions,
@@ -169,15 +304,81 @@ export default function ReportNewPage() {
     ...extra,
   });
 
-  // ✅ Opprett rapport første gang (draft) og få id tilbake
+  async function buildJudgeColumns() {
+    const judgeMap: Record<JudgePosition, JudgeEntry | undefined> = {
+      C: judges.find((j) => j.position === 'C'),
+      M: judges.find((j) => j.position === 'M'),
+      H: judges.find((j) => j.position === 'H'),
+      B: judges.find((j) => j.position === 'B'),
+      E: judges.find((j) => j.position === 'E'),
+    };
+
+    const resolveJudgeId = async (judge: JudgeEntry | undefined) => {
+      if (!judge) return null;
+      if (judge.user_id) return judge.user_id;
+      return findJudgeIdByName(judge.name || '');
+    };
+
+    const [judgeCId, judgeMId, judgeHId, judgeBId, judgeEId] = await Promise.all([
+      resolveJudgeId(judgeMap.C),
+      resolveJudgeId(judgeMap.M),
+      resolveJudgeId(judgeMap.H),
+      resolveJudgeId(judgeMap.B),
+      resolveJudgeId(judgeMap.E),
+    ]);
+
+    const persistedJudges: PersistedJudgeEntry[] = [
+      {
+        position: 'C' as JudgePosition,
+        name: judgeMap.C?.name?.trim() || '',
+        user_id: judgeCId,
+        percent: typeof judgeMap.C?.percent === 'number' ? judgeMap.C.percent : null,
+        resultNumber: typeof judgeMap.C?.resultNumber === 'number' ? judgeMap.C.resultNumber : null,
+      },
+      {
+        position: 'M' as JudgePosition,
+        name: judgeMap.M?.name?.trim() || '',
+        user_id: judgeMId,
+        percent: typeof judgeMap.M?.percent === 'number' ? judgeMap.M.percent : null,
+        resultNumber: typeof judgeMap.M?.resultNumber === 'number' ? judgeMap.M.resultNumber : null,
+      },
+      {
+        position: 'H' as JudgePosition,
+        name: judgeMap.H?.name?.trim() || '',
+        user_id: judgeHId,
+        percent: typeof judgeMap.H?.percent === 'number' ? judgeMap.H.percent : null,
+        resultNumber: typeof judgeMap.H?.resultNumber === 'number' ? judgeMap.H.resultNumber : null,
+      },
+      {
+        position: 'B' as JudgePosition,
+        name: judgeMap.B?.name?.trim() || '',
+        user_id: judgeBId,
+        percent: typeof judgeMap.B?.percent === 'number' ? judgeMap.B.percent : null,
+        resultNumber: typeof judgeMap.B?.resultNumber === 'number' ? judgeMap.B.resultNumber : null,
+      },
+      {
+        position: 'E' as JudgePosition,
+        name: judgeMap.E?.name?.trim() || '',
+        user_id: judgeEId,
+        percent: typeof judgeMap.E?.percent === 'number' ? judgeMap.E.percent : null,
+        resultNumber: typeof judgeMap.E?.resultNumber === 'number' ? judgeMap.E.resultNumber : null,
+      },
+    ].filter((judge) => judge.name || judge.user_id);
+
+    const judgeUserIds = persistedJudges
+      .map((judge) => judge.user_id)
+      .filter((id): id is string => Boolean(id));
+
+    return {
+      judges: persistedJudges,
+      judge_user_ids: judgeUserIds,
+    };
+  }
+
   async function ensureDraftReportId(userId: string) {
     if (reportId) return reportId;
 
-    const [judge1Id, judge2Id, judge3Id] = await Promise.all([
-      findJudgeIdByName(judge1),
-      findJudgeIdByName(judge2),
-      findJudgeIdByName(judge3),
-    ]);
+    const judgeColumns = await buildJudgeColumns();
 
     const { data: created, error } = await supabase
       .from('judge_meeting_reports')
@@ -185,18 +386,9 @@ export default function ReportNewPage() {
         user_id: userId,
         show_date: showDate || null,
         location: location || null,
-        judge_1: judge1 || null,
-        judge_2: judge2 || null,
-        judge_3: judge3 || null,
-        judge_1_id: judge1Id,
-        judge_2_id: judge2Id,
-        judge_3_id: judge3Id,
-
-        // ✅ Dette må matche nye policies:
-        // status='draft' for utkast, og IKKE sette submitted_at her.
+        ...judgeColumns,
         status: 'draft',
         submitted_at: null,
-
         payload: buildPayload({
           imagePaths: [],
         }),
@@ -212,7 +404,6 @@ export default function ReportNewPage() {
     return created.id as string;
   }
 
-  // ✅ Lagre utkast (UPDATE hvis finnes, ellers INSERT draft)
   const handleSaveDraft = async () => {
     if (loading) return;
     setLoading(true);
@@ -229,29 +420,16 @@ export default function ReportNewPage() {
       }
 
       const id = await ensureDraftReportId(user.id);
-
-      const [judge1Id, judge2Id, judge3Id] = await Promise.all([
-        findJudgeIdByName(judge1),
-        findJudgeIdByName(judge2),
-        findJudgeIdByName(judge3),
-      ]);
+      const judgeColumns = await buildJudgeColumns();
 
       const { error: updateError } = await supabase
         .from('judge_meeting_reports')
         .update({
           show_date: showDate || null,
           location: location || null,
-          judge_1: judge1 || null,
-          judge_2: judge2 || null,
-          judge_3: judge3 || null,
-          judge_1_id: judge1Id,
-          judge_2_id: judge2Id,
-          judge_3_id: judge3Id,
-
-          // ✅ Fortsett å være draft
+          ...judgeColumns,
           status: 'draft',
           submitted_at: null,
-
           payload: buildPayload(),
         })
         .eq('id', id);
@@ -269,7 +447,6 @@ export default function ReportNewPage() {
     }
   };
 
-  // ✅ Send inn rapport (oppdater samme draft, sett status=submitted, sett submitted_at)
   const handleSubmit = async () => {
     if (loading) return;
     setLoading(true);
@@ -286,13 +463,7 @@ export default function ReportNewPage() {
       }
 
       const id = await ensureDraftReportId(user.id);
-
-      const [judge1Id, judge2Id, judge3Id] = await Promise.all([
-        findJudgeIdByName(judge1),
-        findJudgeIdByName(judge2),
-        findJudgeIdByName(judge3),
-      ]);
-
+      const judgeColumns = await buildJudgeColumns();
       const imagePaths = await uploadImages(user.id);
 
       const { error: submitError } = await supabase
@@ -300,17 +471,9 @@ export default function ReportNewPage() {
         .update({
           show_date: showDate || null,
           location: location || null,
-          judge_1: judge1 || null,
-          judge_2: judge2 || null,
-          judge_3: judge3 || null,
-          judge_1_id: judge1Id,
-          judge_2_id: judge2Id,
-          judge_3_id: judge3Id,
-
-          // ✅ Dette gjør den "låst" etter policies (status != draft)
+          ...judgeColumns,
           status: 'submitted',
           submitted_at: new Date().toISOString(),
-
           payload: buildPayload({
             imagePaths,
           }),
@@ -339,6 +502,93 @@ export default function ReportNewPage() {
       setTimeout(() => router.push('/profile'), 800);
     } catch {
       setMessage('Noe gikk galt ved innsending.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveAndCreateSimilarDraft = async () => {
+    if (loading) return;
+    setLoading(true);
+    setMessage(null);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push('/login');
+        return;
+      }
+
+      // 1) Lagre/oppdater aktiv rapport som utkast
+      const currentId = await ensureDraftReportId(user.id);
+      const judgeColumns = await buildJudgeColumns();
+      const resetJudgeColumns = {
+        ...judgeColumns,
+        judges: judgeColumns.judges.map((judge) => ({
+          ...judge,
+          percent: null,
+          resultNumber: null,
+        })),
+      };
+
+      const { error: currentUpdateError } = await supabase
+        .from('judge_meeting_reports')
+        .update({
+          show_date: showDate || null,
+          location: location || null,
+          ...judgeColumns,
+          status: 'draft',
+          submitted_at: null,
+          payload: buildPayload(),
+        })
+        .eq('id', currentId);
+
+      if (currentUpdateError) {
+        setMessage('Kunne ikke lagre nåværende utkast. Prøv igjen.');
+        return;
+      }
+
+      // 2) Opprett nytt utkast med videreført stevneinformasjon
+      const { data: created, error: createError } = await supabase
+        .from('judge_meeting_reports')
+        .insert({
+          user_id: user.id,
+          show_date: showDate || null,
+          location: location || null,
+          ...resetJudgeColumns,
+          status: 'draft',
+          submitted_at: null,
+          payload: buildPayload({
+            riderName: '',
+            horseName: '',
+            totalPercent: null,
+            highestPercent: null,
+            lowestPercent: null,
+            deviation: null,
+            judgePercents: {},
+            scores: {},
+            comments: {},
+            specialConditions: '',
+            specialComment: '',
+            otherCause: '',
+            reflection: '',
+            imagePaths: [],
+          }),
+        })
+        .select('id')
+        .single();
+
+      if (createError || !created?.id) {
+        setMessage('Utkast lagret, men kunne ikke opprette ny rapport fra samme klasse.');
+        return;
+      }
+
+      router.push(`/report/edit/${created.id}`);
+    } catch {
+      setMessage('Noe gikk galt. Prøv igjen.');
     } finally {
       setLoading(false);
     }
@@ -430,6 +680,7 @@ export default function ReportNewPage() {
         {step === 1 && (
           <>
             <h2 className="text-xl font-semibold text-deep-sea mb-4">Steg 1: Grunninformasjon</h2>
+
             <div className="grid md:grid-cols-2 gap-4">
               <div>
                 <label className="label">Dato</label>
@@ -451,60 +702,153 @@ export default function ReportNewPage() {
               </div>
             </div>
 
-            {/* Dommer 1-3 med søk + dropdown + klikk-utenfor-lukking (men fritekst er lov) */}
-            <div ref={judgeDropdownRef} className="grid md:grid-cols-3 gap-4">
-              {[
-                { n: 1 as const, label: 'Dommer 1', value: judge1 },
-                { n: 2 as const, label: 'Dommer 2', value: judge2 },
-                { n: 3 as const, label: 'Dommer 3', value: judge3 },
-              ].map((f) => (
-                <div key={f.n} className="relative overflow-visible">
-                  <label className="label">{f.label}</label>
+            <div ref={judgeDropdownRef} className="space-y-4">
+              {judges.map((judge, index) => {
+                const suggestions =
+                  activeJudgeIndex === index && showJudgeDropdown ? filteredJudgeSuggestions : [];
 
-                  <input
-                    type="text"
-                    value={f.value}
-                    onChange={(e) => {
-                      setJudgeValue(f.n, e.target.value);
-                      setActiveJudgeField(f.n);
-                      setShowJudgeDropdown(true);
-                    }}
-                    onFocus={() => {
-                      setActiveJudgeField(f.n);
-                      if (f.value.trim().length >= 2) setShowJudgeDropdown(true);
-                    }}
-                    className="input"
-                    placeholder="Skriv navn"
-                    autoComplete="off"
-                  />
-
-                  {showJudgeDropdown &&
-                    activeJudgeField === f.n &&
-                    filteredJudgeSuggestions.length > 0 && (
-                      <div className="absolute z-50 bg-white border rounded shadow w-full mt-1 max-h-48 overflow-y-auto">
-                        {filteredJudgeSuggestions.map((j) => (
-                          <button
-                            key={j.user_id}
-                            type="button"
-                            onClick={() => {
-                              setJudgeValue(f.n, j.full_name);
-                              setShowJudgeDropdown(false);
-                              setActiveJudgeField(null);
-                            }}
-                            className="block w-full text-left px-3 py-2 hover:bg-gray-100"
-                          >
-                            {j.full_name}
-                          </button>
-                        ))}
+                return (
+                  <div key={`${judge.position}-${index}`} className="space-y-2 relative">
+                    <div className="grid md:grid-cols-[100px_minmax(260px,1fr)] gap-4 items-end">
+                      <div>
+                        <label className="label">Plassering</label>
+                        <select
+                          value={judge.position}
+                          onChange={(e) =>
+                            updateJudgePosition(index, e.target.value as JudgePosition)
+                          }
+                          className="input"
+                        >
+                          {getAvailablePositionsForIndex(index).map((position) => (
+                            <option key={position} value={position}>
+                              {position}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                    )}
-                </div>
-              ))}
+
+                      <div className="relative">
+                        <label className="label">
+                          {judge.position ? `Dommer ${judge.position}` : `Dommer ${index + 1}`}
+                        </label>
+
+                        <input
+                          type="text"
+                          value={judge.name}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            updateJudgeName(index, value);
+                            setActiveJudgeIndex(index);
+                            setShowJudgeDropdown(true);
+                            void searchJudgeSuggestions(value);
+                          }}
+                          onFocus={() => {
+                            setActiveJudgeIndex(index);
+                            if (judge.name.trim().length >= 1) {
+                              setShowJudgeDropdown(true);
+                              void searchJudgeSuggestions(judge.name);
+                            }
+                          }}
+                          className="input"
+                          placeholder="Skriv navn"
+                          autoComplete="off"
+                        />
+
+                        {showJudgeDropdown &&
+                          activeJudgeIndex === index &&
+                          suggestions.length > 0 && (
+                            <div className="absolute z-50 bg-white border rounded shadow w-full mt-1 max-h-48 overflow-y-auto">
+                              {suggestions.map((j) => (
+                                <button
+                                  key={j.user_id}
+                                  type="button"
+                                  onClick={() => {
+                                    setJudges((prev) =>
+                                      prev.map((entry, i) =>
+                                        i === index
+                                          ? { ...entry, name: j.full_name, user_id: j.user_id }
+                                          : entry
+                                      )
+                                    );
+                                    setShowJudgeDropdown(false);
+                                    setActiveJudgeIndex(null);
+                                  }}
+                                  className="block w-full text-left px-3 py-2 hover:bg-gray-100"
+                                >
+                                  {j.full_name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-4 items-end">
+                      <div>
+                        <label className="label">Plassering i klassen</label>
+                        <input
+                          type="number"
+                          className="input"
+                          value={judge.resultNumber ?? ''}
+                          onChange={(e) =>
+                            updateJudgeResultNumber(
+                              index,
+                              Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
+                            )
+                          }
+                          placeholder="Eks: 1, 2, 3..."
+                        />
+                      </div>
+
+                      <div>
+                        <label className="label">%</label>
+                        <input
+                          type="number"
+                          step="0.001"
+                          className="input"
+                          value={judge.percent ?? ''}
+                          onChange={(e) =>
+                            updateJudgePercent(
+                              index,
+                              Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
+                            )
+                          }
+                          placeholder="0.000"
+                        />
+                      </div>
+
+                      <div>
+                        {judges.length > 1 && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary whitespace-nowrap"
+                            onClick={() => removeJudge(index)}
+                          >
+                            Fjern
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      {judges.length < 5 && index === judges.length - 1 && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary whitespace-nowrap"
+                          onClick={addJudge}
+                        >
+                          + Legg til dommer
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
-            <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid md:grid-cols-3 gap-4">
               <div>
-                <label className="label">Klassenivå / program</label>
+                <label className="label">Klasse</label>
                 <input
                   type="text"
                   value={classLevel}
@@ -512,6 +856,37 @@ export default function ReportNewPage() {
                   className="input"
                 />
               </div>
+              <div>
+                <label className="label">Antall i klassen</label>
+                <input
+                  type="number"
+                  value={numStartersClass === '' ? '' : numStartersClass}
+                  onChange={(e) =>
+                    setNumStartersClass(
+                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
+                    )
+                  }
+                  className="input"
+                  placeholder="Eks: 8, 15..."
+                />
+              </div>
+              <div>
+                <label className="label">Plassering i klassen (total)</label>
+                <input
+                  type="number"
+                  value={classPlacementTotal === '' ? '' : classPlacementTotal}
+                  onChange={(e) =>
+                    setClassPlacementTotal(
+                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
+                    )
+                  }
+                  className="input"
+                  placeholder=""
+                />
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
               <div>
                 <label className="label">Rytter</label>
                 <input
@@ -521,9 +896,6 @@ export default function ReportNewPage() {
                   className="input"
                 />
               </div>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-4">
               <div>
                 <label className="label">Hest</label>
                 <input
@@ -533,54 +905,40 @@ export default function ReportNewPage() {
                   className="input"
                 />
               </div>
-              <div>
-                <label className="label">Total %</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={totalPercent}
-                  onChange={(e) =>
-                    setTotalPercent(
-                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
-                    )
-                  }
-                  className="input"
-                />
-              </div>
             </div>
 
-            <div className="grid md:grid-cols-3 gap-4">
+            <div className="grid md:grid-cols-4 gap-2">
               <div>
                 <label className="label">Høyeste %</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={highestPercent}
-                  onChange={(e) =>
-                    setHighestPercent(
-                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
-                    )
-                  }
-                  className="input"
+                  value={formatPercent(highestPercent)}
+                  readOnly
+                  className="input bg-warm-sand-light"
                 />
               </div>
               <div>
                 <label className="label">Laveste %</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={lowestPercent}
-                  onChange={(e) =>
-                    setLowestPercent(
-                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
-                    )
-                  }
-                  className="input"
+                  value={formatPercent(lowestPercent)}
+                  readOnly
+                  className="input bg-warm-sand-light"
                 />
               </div>
               <div>
-                <label className="label">Avvik % (auto)</label>
-                <input value={deviation} readOnly className="input bg-warm-sand-light" />
+                <label className="label">Total %</label>
+                <input
+                  value={formatPercent(totalPercent)}
+                  readOnly
+                  className="input bg-warm-sand-light"
+                />
+              </div>
+              <div>
+                <label className="label">Avvik %</label>
+                <input
+                  value={formatPercent(deviation)}
+                  readOnly
+                  className="input bg-warm-sand-light"
+                />
               </div>
             </div>
 
@@ -758,8 +1116,8 @@ export default function ReportNewPage() {
               Steg 4: Last opp protokollbilder
             </h2>
             <p className="text-muted mb-3 text-sm">
-              Her kan du laste opp bilder av protokollene fra stevnet. Du kan laste opp flere filer
-              samtidig.
+              Her kan du laste opp protokollene fra stevnet. Du kan laste opp flere filer samtidig.
+              Du kan velge bildefiler, pdf eller lignende.
             </p>
 
             <input
@@ -773,11 +1131,14 @@ export default function ReportNewPage() {
             {previewUrls.length > 0 && (
               <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3">
                 {previewUrls.map((url, idx) => (
-                  <img
+                  <Image
                     key={idx}
                     src={url}
                     alt={`Forhåndsvisning ${idx + 1}`}
-                    className="rounded-md shadow-md w-full"
+                    width={1200}
+                    height={900}
+                    unoptimized
+                    className="rounded-md shadow-md w-full h-auto"
                   />
                 ))}
               </div>
@@ -817,9 +1178,22 @@ export default function ReportNewPage() {
               <p>
                 <b>Lokasjon:</b> {location}
               </p>
-              <p>
-                <b>Dommere:</b> {judge1}, {judge2}, {judge3}
-              </p>
+              <div>
+                <b>Dommere:</b>
+                <div className="mt-1 space-y-1">
+                  {judges
+                    .filter((judge) => judge.name.trim() || judge.position)
+                    .map((judge, index) => (
+                      <p key={`${judge.position}-${index}`}>
+                        {judge.position ? `Dommer ${judge.position}` : 'Dommer'}:{' '}
+                        {judge.name || '—'}
+                        {' • '}
+                        {formatPercent(judge.percent)}
+                        {typeof judge.percent === 'number' ? '%' : ''}
+                      </p>
+                    ))}
+                </div>
+              </div>
               <p>
                 <b>Klasse:</b> {classLevel}
               </p>
@@ -830,10 +1204,10 @@ export default function ReportNewPage() {
                 <b>Hest:</b> {horseName}
               </p>
               <p>
-                <b>Total %:</b> {totalPercent}
+                <b>Total %:</b> {formatPercent(totalPercent)}
               </p>
               <p>
-                <b>Avvik %:</b> {deviation}
+                <b>Avvik %:</b> {formatPercent(deviation)}
               </p>
 
               {reportId && (
@@ -856,11 +1230,14 @@ export default function ReportNewPage() {
                 <h3 className="text-deep-sea font-semibold mt-4">Protokollbilder</h3>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {previewUrls.map((url, idx) => (
-                    <img
+                    <Image
                       key={idx}
                       src={url}
                       alt={`Opplasting ${idx + 1}`}
-                      className="rounded-md shadow-md w-full"
+                      width={1200}
+                      height={900}
+                      unoptimized
+                      className="rounded-md shadow-md w-full h-auto"
                     />
                   ))}
                 </div>
@@ -885,6 +1262,15 @@ export default function ReportNewPage() {
                   disabled={loading}
                 >
                   {loading ? 'Lagrer...' : 'Lagre utkast'}
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary w-full sm:w-auto"
+                  onClick={handleSaveAndCreateSimilarDraft}
+                  disabled={loading}
+                >
+                  {loading ? 'Oppretter...' : 'Lagre og fyll ut en til fra samme klasse'}
                 </button>
 
                 <button

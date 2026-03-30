@@ -3,26 +3,59 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useParams, useRouter } from 'next/navigation';
+import Image from 'next/image';
 
 type JudgeSuggestion = { user_id: string; full_name: string };
 type JudgeMeetingReportStatus = 'draft' | 'submitted';
+type JudgePosition = 'C' | 'M' | 'H' | 'B' | 'E';
+type JudgeEntry = {
+  position: JudgePosition;
+  name: string;
+  user_id?: string | null;
+  percent?: number | '';
+  resultNumber?: number | '';
+};
+type PersistedJudgeEntry = {
+  position: JudgePosition;
+  name: string;
+  user_id: string | null;
+  percent?: number | null;
+  resultNumber?: number | null;
+};
+
+const JUDGE_POSITIONS: JudgePosition[] = ['C', 'M', 'H', 'B', 'E'];
+
+type ReportPayload = {
+  classLevel?: string;
+  riderName?: string;
+  horseName?: string;
+  numStartersClass?: number | '';
+  classPlacementTotal?: number | null;
+  totalPercent?: number | '';
+  highestPercent?: number | '';
+  lowestPercent?: number | '';
+  judgePercents?: Partial<Record<JudgePosition, number>>;
+  scores?: Record<string, number | ''>;
+  comments?: Record<string, string>;
+  specialConditions?: string;
+  specialComment?: string;
+  otherCause?: string;
+  reflection?: string;
+  imagePaths?: string[];
+};
 
 type ReportRow = {
   id: string;
   user_id: string;
   show_date: string | null;
   location: string | null;
-  judge_1: string | null;
-  judge_2: string | null;
-  judge_3: string | null;
-  judge_1_id: string | null;
-  judge_2_id: string | null;
-  judge_3_id: string | null;
+  judges: PersistedJudgeEntry[] | null;
+  judge_user_ids: string[] | null;
   status: JudgeMeetingReportStatus | null;
   submitted_at: string | null;
   created_at: string;
   updated_at: string | null;
-  payload: any;
+  payload: ReportPayload;
 };
 
 export default function ReportEditPage() {
@@ -44,26 +77,65 @@ export default function ReportEditPage() {
   // --- STEG 1: Grunninfo ---
   const [showDate, setShowDate] = useState('');
   const [location, setLocation] = useState('');
-  const [judge1, setJudge1] = useState('');
-  const [judge2, setJudge2] = useState('');
-  const [judge3, setJudge3] = useState('');
+  const [numStartersClass, setNumStartersClass] = useState<number | ''>('');
+  const [classPlacementTotal, setClassPlacementTotal] = useState<number | ''>('');
+  const [judges, setJudges] = useState<JudgeEntry[]>([{ position: 'C', name: '', user_id: null }]);
   const [classLevel, setClassLevel] = useState('');
   const [riderName, setRiderName] = useState('');
   const [horseName, setHorseName] = useState('');
-  const [totalPercent, setTotalPercent] = useState<number | ''>('');
-  const [highestPercent, setHighestPercent] = useState<number | ''>('');
-  const [lowestPercent, setLowestPercent] = useState<number | ''>('');
+  const judgePercentValues = useMemo(
+    () =>
+      judges
+        .map((j) => j.percent)
+        .filter((value): value is number => typeof value === 'number' && Number.isFinite(value)),
+    [judges]
+  );
+
+  const totalPercent =
+    judgePercentValues.length > 0
+      ? judgePercentValues.reduce((sum, value) => sum + value, 0) / judgePercentValues.length
+      : '';
+
+  const highestPercent = judgePercentValues.length > 0 ? Math.max(...judgePercentValues) : '';
+  const lowestPercent = judgePercentValues.length > 0 ? Math.min(...judgePercentValues) : '';
 
   const deviation =
     highestPercent !== '' && lowestPercent !== ''
-      ? (Number(highestPercent) - Number(lowestPercent)).toFixed(2)
+      ? (Number(highestPercent) - Number(lowestPercent)).toFixed(3)
       : '';
+
+  const formatPercent = (value: number | string | '' | null | undefined) => {
+    if (value === '' || value === null || value === undefined) return '—';
+    const numeric = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(numeric) ? numeric.toFixed(3) : '—';
+  };
 
   // --- Dropdown: dommer-søk ---
   const [judgeSuggestions, setJudgeSuggestions] = useState<JudgeSuggestion[]>([]);
-  const [activeJudgeField, setActiveJudgeField] = useState<1 | 2 | 3 | null>(null);
+  const [activeJudgeIndex, setActiveJudgeIndex] = useState<number | null>(null);
   const [showJudgeDropdown, setShowJudgeDropdown] = useState(false);
   const judgeDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  const searchJudgeSuggestions = async (query: string) => {
+    const q = query.trim();
+    if (q.length < 1) {
+      setJudgeSuggestions([]);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/judges/search?q=${encodeURIComponent(q)}`);
+      if (!res.ok) {
+        setJudgeSuggestions([]);
+        return;
+      }
+
+      const payload = (await res.json()) as { judges?: JudgeSuggestion[] };
+      setJudgeSuggestions(payload.judges ?? []);
+    } catch {
+      setJudgeSuggestions([]);
+    }
+  };
 
   // --- STEG 2: Punkter ---
   const REPORT_POINTS = [
@@ -99,12 +171,7 @@ export default function ReportEditPage() {
   // Hent dommere til autocomplete
   useEffect(() => {
     const loadJudges = async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('user_id, full_name')
-        .not('full_name', 'is', null);
-
-      if (data) setJudgeSuggestions(data as JudgeSuggestion[]);
+      setJudgeSuggestions([]);
     };
 
     loadJudges();
@@ -119,7 +186,7 @@ export default function ReportEditPage() {
 
       if (e.target instanceof Node && !el.contains(e.target)) {
         setShowJudgeDropdown(false);
-        setActiveJudgeField(null);
+        setActiveJudgeIndex(null);
       }
     };
 
@@ -128,22 +195,63 @@ export default function ReportEditPage() {
   }, [showJudgeDropdown]);
 
   const activeJudgeValue = useMemo(() => {
-    if (activeJudgeField === 1) return judge1;
-    if (activeJudgeField === 2) return judge2;
-    if (activeJudgeField === 3) return judge3;
-    return '';
-  }, [activeJudgeField, judge1, judge2, judge3]);
+    if (activeJudgeIndex === null) return '';
+    return judges[activeJudgeIndex]?.name ?? '';
+  }, [activeJudgeIndex, judges]);
 
   const filteredJudgeSuggestions = useMemo(() => {
     const q = activeJudgeValue.trim().toLowerCase();
-    if (q.length < 2) return [];
-    return judgeSuggestions.filter((j) => j.full_name.toLowerCase().includes(q)).slice(0, 20);
+    if (q.length < 1) return [];
+    return judgeSuggestions.filter((j) => j.full_name.toLowerCase().includes(q));
   }, [activeJudgeValue, judgeSuggestions]);
 
-  const setJudgeValue = (field: 1 | 2 | 3, value: string) => {
-    if (field === 1) setJudge1(value);
-    if (field === 2) setJudge2(value);
-    if (field === 3) setJudge3(value);
+  const updateJudgeName = (index: number, value: string) => {
+    setJudges((prev) =>
+      prev.map((j, i) => (i === index ? { ...j, name: value, user_id: null } : j))
+    );
+  };
+
+  const updateJudgePercent = (index: number, value: number | '') => {
+    setJudges((prev) => prev.map((j, i) => (i === index ? { ...j, percent: value } : j)));
+  };
+
+  const updateJudgeResultNumber = (index: number, value: number | '') => {
+    setJudges((prev) => prev.map((j, i) => (i === index ? { ...j, resultNumber: value } : j)));
+  };
+
+  const updateJudgePosition = (index: number, position: JudgePosition) => {
+    setJudges((prev) => prev.map((j, i) => (i === index ? { ...j, position } : j)));
+  };
+
+  const getAvailablePositionsForIndex = (index: number): JudgePosition[] => {
+    const usedByOthers = judges.filter((_, i) => i !== index).map((j) => j.position);
+    return JUDGE_POSITIONS.filter(
+      (position) => position === judges[index]?.position || !usedByOthers.includes(position)
+    );
+  };
+
+  const addJudge = () => {
+    if (judges.length >= 5) return;
+    const used = judges.map((j) => j.position);
+    const nextPosition = JUDGE_POSITIONS.find((p) => !used.includes(p));
+    if (!nextPosition) return;
+    setJudges((prev) => [
+      ...prev,
+      { position: nextPosition, name: '', user_id: null, resultNumber: '' },
+    ]);
+  };
+
+  const removeJudge = (index: number) => {
+    if (index === 0) return;
+    setJudges((prev) => prev.filter((_, i) => i !== index));
+    if (activeJudgeIndex !== null) {
+      if (activeJudgeIndex === index) {
+        setActiveJudgeIndex(null);
+        setShowJudgeDropdown(false);
+      } else if (activeJudgeIndex > index) {
+        setActiveJudgeIndex(activeJudgeIndex - 1);
+      }
+    }
   };
 
   // Fetch report
@@ -170,7 +278,7 @@ export default function ReportEditPage() {
       const { data, error } = await supabase
         .from('judge_meeting_reports')
         .select(
-          'id, user_id, show_date, location, judge_1, judge_2, judge_3, judge_1_id, judge_2_id, judge_3_id, status, submitted_at, created_at, updated_at, payload'
+          'id, user_id, show_date, location, judges, judge_user_ids, status, submitted_at, created_at, updated_at, payload'
         )
         .eq('id', id)
         .single();
@@ -188,7 +296,7 @@ export default function ReportEditPage() {
         return;
       }
 
-      const payload = (data as ReportRow).payload || {};
+      const payload: ReportPayload = (data as ReportRow).payload || {};
       const status: JudgeMeetingReportStatus =
         (data as ReportRow).status === 'submitted' ? 'submitted' : 'draft';
 
@@ -196,17 +304,32 @@ export default function ReportEditPage() {
 
       setShowDate((data as ReportRow).show_date ?? '');
       setLocation((data as ReportRow).location ?? '');
-      setJudge1((data as ReportRow).judge_1 ?? '');
-      setJudge2((data as ReportRow).judge_2 ?? '');
-      setJudge3((data as ReportRow).judge_3 ?? '');
+
+      const reportRow = data as ReportRow;
+      const fromJson: JudgeEntry[] = Array.isArray(reportRow.judges)
+        ? reportRow.judges
+            .filter((j): j is PersistedJudgeEntry => {
+              const pos = j?.position;
+              return Boolean(pos && JUDGE_POSITIONS.includes(pos));
+            })
+            .map(
+              (j): JudgeEntry => ({
+                position: j.position as JudgePosition,
+                name: j.name ?? '',
+                user_id: j.user_id ?? null,
+                percent: typeof j.percent === 'number' ? j.percent : ('' as const),
+                resultNumber: typeof j.resultNumber === 'number' ? j.resultNumber : ('' as const),
+              })
+            )
+        : [];
+
+      setJudges(fromJson.length > 0 ? fromJson : [{ position: 'C', name: '', user_id: null }]);
 
       setClassLevel(payload.classLevel ?? '');
+      setNumStartersClass(payload.numStartersClass ?? '');
+      setClassPlacementTotal(payload.classPlacementTotal ?? '');
       setRiderName(payload.riderName ?? '');
       setHorseName(payload.horseName ?? '');
-
-      setTotalPercent(payload.totalPercent ?? '');
-      setHighestPercent(payload.highestPercent ?? '');
-      setLowestPercent(payload.lowestPercent ?? '');
 
       setScores(payload.scores ?? {});
       setComments(payload.comments ?? {});
@@ -229,8 +352,14 @@ export default function ReportEditPage() {
     const clean = name.trim();
     if (!clean) return null;
 
-    const { data } = await supabase.from('profiles').select('user_id').ilike('full_name', clean);
-    return (data as any)?.[0]?.user_id || null;
+    const { data } = await supabase
+      .from('profiles')
+      .select('user_id')
+      .ilike('full_name', clean)
+      .limit(1);
+
+    const rows = data as Array<{ user_id: string }> | null;
+    return rows?.[0]?.user_id ?? null;
   }
 
   // Last opp bilder til Supabase
@@ -253,14 +382,25 @@ export default function ReportEditPage() {
     return paths;
   }
 
-  const buildPayload = (extra?: Record<string, any>) => ({
+  const buildPayload = (extra?: Record<string, unknown>) => ({
     classLevel,
     riderName,
     horseName,
+    numStartersClass: numStartersClass === '' ? null : Number(numStartersClass),
+    classPlacementTotal: classPlacementTotal === '' ? null : Number(classPlacementTotal),
     totalPercent: totalPercent === '' ? null : Number(totalPercent),
     highestPercent: highestPercent === '' ? null : Number(highestPercent),
     lowestPercent: lowestPercent === '' ? null : Number(lowestPercent),
     deviation: deviation === '' ? null : deviation,
+    judgePercents: judges.reduce(
+      (acc, judge) => {
+        if (typeof judge.percent === 'number' && Number.isFinite(judge.percent)) {
+          acc[judge.position] = judge.percent;
+        }
+        return acc;
+      },
+      {} as Partial<Record<JudgePosition, number>>
+    ),
     scores,
     comments,
     specialConditions,
@@ -270,6 +410,77 @@ export default function ReportEditPage() {
     imagePaths: existingImagePaths,
     ...extra,
   });
+
+  async function buildJudgeColumns() {
+    const judgeMap: Record<JudgePosition, JudgeEntry | undefined> = {
+      C: judges.find((j) => j.position === 'C'),
+      M: judges.find((j) => j.position === 'M'),
+      H: judges.find((j) => j.position === 'H'),
+      B: judges.find((j) => j.position === 'B'),
+      E: judges.find((j) => j.position === 'E'),
+    };
+
+    const resolveJudgeId = async (judge?: JudgeEntry) => {
+      if (!judge) return null;
+      if (judge.user_id) return judge.user_id;
+      return findJudgeIdByName(judge.name || '');
+    };
+
+    const [judgeCId, judgeMId, judgeHId, judgeBId, judgeEId] = await Promise.all([
+      resolveJudgeId(judgeMap.C),
+      resolveJudgeId(judgeMap.M),
+      resolveJudgeId(judgeMap.H),
+      resolveJudgeId(judgeMap.B),
+      resolveJudgeId(judgeMap.E),
+    ]);
+
+    const persistedJudges: PersistedJudgeEntry[] = [
+      {
+        position: 'C' as JudgePosition,
+        name: judgeMap.C?.name?.trim() || '',
+        user_id: judgeCId,
+        percent: typeof judgeMap.C?.percent === 'number' ? judgeMap.C.percent : null,
+        resultNumber: typeof judgeMap.C?.resultNumber === 'number' ? judgeMap.C.resultNumber : null,
+      },
+      {
+        position: 'M' as JudgePosition,
+        name: judgeMap.M?.name?.trim() || '',
+        user_id: judgeMId,
+        percent: typeof judgeMap.M?.percent === 'number' ? judgeMap.M.percent : null,
+        resultNumber: typeof judgeMap.M?.resultNumber === 'number' ? judgeMap.M.resultNumber : null,
+      },
+      {
+        position: 'H' as JudgePosition,
+        name: judgeMap.H?.name?.trim() || '',
+        user_id: judgeHId,
+        percent: typeof judgeMap.H?.percent === 'number' ? judgeMap.H.percent : null,
+        resultNumber: typeof judgeMap.H?.resultNumber === 'number' ? judgeMap.H.resultNumber : null,
+      },
+      {
+        position: 'B' as JudgePosition,
+        name: judgeMap.B?.name?.trim() || '',
+        user_id: judgeBId,
+        percent: typeof judgeMap.B?.percent === 'number' ? judgeMap.B.percent : null,
+        resultNumber: typeof judgeMap.B?.resultNumber === 'number' ? judgeMap.B.resultNumber : null,
+      },
+      {
+        position: 'E' as JudgePosition,
+        name: judgeMap.E?.name?.trim() || '',
+        user_id: judgeEId,
+        percent: typeof judgeMap.E?.percent === 'number' ? judgeMap.E.percent : null,
+        resultNumber: typeof judgeMap.E?.resultNumber === 'number' ? judgeMap.E.resultNumber : null,
+      },
+    ].filter((judge) => judge.name || judge.user_id);
+
+    const judgeUserIds = persistedJudges
+      .map((judge) => judge.user_id)
+      .filter((id): id is string => Boolean(id));
+
+    return {
+      judges: persistedJudges,
+      judge_user_ids: judgeUserIds,
+    };
+  }
 
   // Lagre (UPDATE)
   const handleSaveDraft = async () => {
@@ -288,26 +499,17 @@ export default function ReportEditPage() {
         return;
       }
 
-      const [judge1Id, judge2Id, judge3Id] = await Promise.all([
-        findJudgeIdByName(judge1),
-        findJudgeIdByName(judge2),
-        findJudgeIdByName(judge3),
-      ]);
+      const judgeColumns = await buildJudgeColumns();
 
       const { error } = await supabase
         .from('judge_meeting_reports')
         .update({
           show_date: showDate || null,
           location: location || null,
-          judge_1: judge1 || null,
-          judge_2: judge2 || null,
-          judge_3: judge3 || null,
-          judge_1_id: judge1Id,
-          judge_2_id: judge2Id,
-          judge_3_id: judge3Id,
+          ...judgeColumns,
           status: 'draft',
           submitted_at: null,
-          payload: buildPayload(),
+          payload: buildPayload({ judges }),
         })
         .eq('id', id);
 
@@ -342,11 +544,7 @@ export default function ReportEditPage() {
         return;
       }
 
-      const [judge1Id, judge2Id, judge3Id] = await Promise.all([
-        findJudgeIdByName(judge1),
-        findJudgeIdByName(judge2),
-        findJudgeIdByName(judge3),
-      ]);
+      const judgeColumns = await buildJudgeColumns();
 
       const newImagePaths = await uploadImages(user.id);
       const mergedImagePaths = [...existingImagePaths, ...newImagePaths];
@@ -357,15 +555,10 @@ export default function ReportEditPage() {
         .update({
           show_date: showDate || null,
           location: location || null,
-          judge_1: judge1 || null,
-          judge_2: judge2 || null,
-          judge_3: judge3 || null,
-          judge_1_id: judge1Id,
-          judge_2_id: judge2Id,
-          judge_3_id: judge3Id,
+          ...judgeColumns,
           status: 'submitted',
           submitted_at: new Date().toISOString(),
-          payload: buildPayload({ imagePaths: mergedImagePaths }),
+          payload: buildPayload({ imagePaths: mergedImagePaths, judges }),
         })
         .eq('id', id);
 
@@ -393,6 +586,91 @@ export default function ReportEditPage() {
       setTimeout(() => router.push('/profile'), 800);
     } catch {
       setMessage('Noe gikk galt ved innsending.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveAndCreateSimilarDraft = async () => {
+    if (loading || isLocked) return;
+
+    setLoading(true);
+    setMessage(null);
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push('/login');
+        return;
+      }
+
+      const judgeColumns = await buildJudgeColumns();
+      const resetJudges = judges.map((judge) => ({ ...judge, percent: '' as const }));
+      const resetJudgeColumns = {
+        ...judgeColumns,
+        judges: judgeColumns.judges.map((judge) => ({ ...judge, percent: null })),
+      };
+
+      // 1) Lagre nåværende utkast først
+      const { error: saveError } = await supabase
+        .from('judge_meeting_reports')
+        .update({
+          show_date: showDate || null,
+          location: location || null,
+          ...judgeColumns,
+          status: 'draft',
+          submitted_at: null,
+          payload: buildPayload({ judges }),
+        })
+        .eq('id', id);
+
+      if (saveError) {
+        setMessage('Kunne ikke lagre nåværende utkast. Prøv igjen.');
+        return;
+      }
+
+      // 2) Opprett nytt utkast med videreført klasse-/stevneinfo
+      const { data: created, error: createError } = await supabase
+        .from('judge_meeting_reports')
+        .insert({
+          user_id: user.id,
+          show_date: showDate || null,
+          location: location || null,
+          ...resetJudgeColumns,
+          status: 'draft',
+          submitted_at: null,
+          payload: buildPayload({
+            riderName: '',
+            horseName: '',
+            totalPercent: null,
+            highestPercent: null,
+            lowestPercent: null,
+            deviation: null,
+            judgePercents: {},
+            scores: {},
+            comments: {},
+            specialConditions: '',
+            specialComment: '',
+            otherCause: '',
+            reflection: '',
+            imagePaths: [],
+            judges: resetJudges,
+          }),
+        })
+        .select('id')
+        .single();
+
+      if (createError || !created?.id) {
+        setMessage('Utkast lagret, men kunne ikke opprette ny rapport fra samme klasse.');
+        return;
+      }
+
+      router.push(`/report/edit/${created.id}`);
+    } catch {
+      setMessage('Noe gikk galt. Prøv igjen.');
     } finally {
       setLoading(false);
     }
@@ -521,63 +799,160 @@ export default function ReportEditPage() {
               </div>
             </div>
 
-            <div ref={judgeDropdownRef} className="grid md:grid-cols-3 gap-4">
-              {[
-                { n: 1 as const, label: 'Dommer 1', value: judge1 },
-                { n: 2 as const, label: 'Dommer 2', value: judge2 },
-                { n: 3 as const, label: 'Dommer 3', value: judge3 },
-              ].map((f) => (
-                <div key={f.n} className="relative overflow-visible">
-                  <label className="label">{f.label}</label>
+            <div ref={judgeDropdownRef} className="space-y-4">
+              {judges.map((judge, index) => {
+                const suggestions =
+                  activeJudgeIndex === index && showJudgeDropdown ? filteredJudgeSuggestions : [];
 
-                  <input
-                    type="text"
-                    value={f.value}
-                    onChange={(e) => {
-                      if (isLocked) return;
-                      setJudgeValue(f.n, e.target.value);
-                      setActiveJudgeField(f.n);
-                      setShowJudgeDropdown(true);
-                    }}
-                    onFocus={() => {
-                      if (isLocked) return;
-                      setActiveJudgeField(f.n);
-                      if (f.value.trim().length >= 2) setShowJudgeDropdown(true);
-                    }}
-                    className="input"
-                    placeholder="Skriv navn"
-                    autoComplete="off"
-                    disabled={isLocked}
-                  />
-
-                  {!isLocked &&
-                    showJudgeDropdown &&
-                    activeJudgeField === f.n &&
-                    filteredJudgeSuggestions.length > 0 && (
-                      <div className="absolute z-50 bg-white border rounded shadow w-full mt-1 max-h-48 overflow-y-auto">
-                        {filteredJudgeSuggestions.map((j) => (
-                          <button
-                            key={j.user_id}
-                            type="button"
-                            onClick={() => {
-                              setJudgeValue(f.n, j.full_name);
-                              setShowJudgeDropdown(false);
-                              setActiveJudgeField(null);
-                            }}
-                            className="block w-full text-left px-3 py-2 hover:bg-gray-100"
-                          >
-                            {j.full_name}
-                          </button>
-                        ))}
+                return (
+                  <div key={`${judge.position}-${index}`} className="space-y-2 relative">
+                    <div className="grid md:grid-cols-[100px_minmax(260px,1fr)] gap-4 items-end">
+                      <div>
+                        <label className="label">Plassering</label>
+                        <select
+                          value={judge.position}
+                          onChange={(e) =>
+                            updateJudgePosition(index, e.target.value as JudgePosition)
+                          }
+                          className="input"
+                          disabled={isLocked}
+                        >
+                          {getAvailablePositionsForIndex(index).map((position) => (
+                            <option key={position} value={position}>
+                              {position}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                    )}
-                </div>
-              ))}
+
+                      <div className="relative">
+                        <label className="label">
+                          {judge.position ? `Dommer ${judge.position}` : `Dommer ${index + 1}`}
+                        </label>
+
+                        <input
+                          type="text"
+                          value={judge.name}
+                          onChange={(e) => {
+                            if (isLocked) return;
+                            const value = e.target.value;
+                            updateJudgeName(index, value);
+                            setActiveJudgeIndex(index);
+                            setShowJudgeDropdown(true);
+                            void searchJudgeSuggestions(value);
+                          }}
+                          onFocus={() => {
+                            if (isLocked) return;
+                            setActiveJudgeIndex(index);
+                            if (judge.name.trim().length >= 1) {
+                              setShowJudgeDropdown(true);
+                              void searchJudgeSuggestions(judge.name);
+                            }
+                          }}
+                          className="input"
+                          placeholder="Skriv navn"
+                          autoComplete="off"
+                          disabled={isLocked}
+                        />
+
+                        {!isLocked &&
+                          showJudgeDropdown &&
+                          activeJudgeIndex === index &&
+                          suggestions.length > 0 && (
+                            <div className="absolute z-50 bg-white border rounded shadow w-full mt-1 max-h-48 overflow-y-auto">
+                              {suggestions.map((j) => (
+                                <button
+                                  key={j.user_id}
+                                  type="button"
+                                  onClick={() => {
+                                    setJudges((prev) =>
+                                      prev.map((entry, i) =>
+                                        i === index
+                                          ? { ...entry, name: j.full_name, user_id: j.user_id }
+                                          : entry
+                                      )
+                                    );
+                                    setShowJudgeDropdown(false);
+                                    setActiveJudgeIndex(null);
+                                  }}
+                                  className="block w-full text-left px-3 py-2 hover:bg-gray-100"
+                                >
+                                  {j.full_name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-4 items-end">
+                      <div>
+                        <label className="label">Plassering i klassen</label>
+                        <input
+                          type="number"
+                          value={judge.resultNumber ?? ''}
+                          onChange={(e) =>
+                            updateJudgeResultNumber(
+                              index,
+                              Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
+                            )
+                          }
+                          className="input"
+                          placeholder="Eks: 1, 2, 3..."
+                          disabled={isLocked}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="label">%</label>
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={judge.percent ?? ''}
+                          onChange={(e) =>
+                            updateJudgePercent(
+                              index,
+                              Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
+                            )
+                          }
+                          className="input"
+                          placeholder="0.000"
+                          disabled={isLocked}
+                        />
+                      </div>
+
+                      <div>
+                        {!isLocked && judges.length > 1 && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary whitespace-nowrap"
+                            onClick={() => removeJudge(index)}
+                          >
+                            Fjern
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      {!isLocked && judges.length < 5 && index === judges.length - 1 && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary whitespace-nowrap"
+                          onClick={addJudge}
+                        >
+                          + Legg til dommer
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
-            <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid md:grid-cols-3 gap-4">
               <div>
-                <label className="label">Klassenivå / program</label>
+                <label className="label">Klasse</label>
                 <input
                   type="text"
                   value={classLevel}
@@ -586,6 +961,39 @@ export default function ReportEditPage() {
                   disabled={isLocked}
                 />
               </div>
+              <div>
+                <label className="label">Antall i klassen</label>
+                <input
+                  type="number"
+                  value={numStartersClass === '' ? '' : numStartersClass}
+                  onChange={(e) =>
+                    setNumStartersClass(
+                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
+                    )
+                  }
+                  className="input"
+                  placeholder="Eks: 8, 15..."
+                  disabled={isLocked}
+                />
+              </div>
+              <div>
+                <label className="label">Plassering i klassen</label>
+                <input
+                  type="number"
+                  value={classPlacementTotal === '' ? '' : classPlacementTotal}
+                  onChange={(e) =>
+                    setClassPlacementTotal(
+                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
+                    )
+                  }
+                  className="input"
+                  placeholder="Eks: 1, 2, 3..."
+                  disabled={isLocked}
+                />
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
               <div>
                 <label className="label">Rytter</label>
                 <input
@@ -596,9 +1004,6 @@ export default function ReportEditPage() {
                   disabled={isLocked}
                 />
               </div>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-4">
               <div>
                 <label className="label">Hest</label>
                 <input
@@ -609,57 +1014,40 @@ export default function ReportEditPage() {
                   disabled={isLocked}
                 />
               </div>
-              <div>
-                <label className="label">Total %</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={totalPercent}
-                  onChange={(e) =>
-                    setTotalPercent(
-                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
-                    )
-                  }
-                  className="input"
-                  disabled={isLocked}
-                />
-              </div>
             </div>
 
-            <div className="grid md:grid-cols-3 gap-4">
+            <div className="grid md:grid-cols-4 gap-2">
               <div>
                 <label className="label">Høyeste %</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={highestPercent}
-                  onChange={(e) =>
-                    setHighestPercent(
-                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
-                    )
-                  }
-                  className="input"
-                  disabled={isLocked}
+                  value={formatPercent(highestPercent)}
+                  readOnly
+                  className="input bg-warm-sand-light"
                 />
               </div>
               <div>
                 <label className="label">Laveste %</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={lowestPercent}
-                  onChange={(e) =>
-                    setLowestPercent(
-                      Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
-                    )
-                  }
-                  className="input"
-                  disabled={isLocked}
+                  value={formatPercent(lowestPercent)}
+                  readOnly
+                  className="input bg-warm-sand-light"
                 />
               </div>
               <div>
-                <label className="label">Avvik % (auto)</label>
-                <input value={deviation} readOnly className="input bg-warm-sand-light" />
+                <label className="label">Total %</label>
+                <input
+                  value={formatPercent(totalPercent)}
+                  readOnly
+                  className="input bg-warm-sand-light"
+                />
+              </div>
+              <div>
+                <label className="label">Avvik %</label>
+                <input
+                  value={formatPercent(deviation)}
+                  readOnly
+                  className="input bg-warm-sand-light"
+                />
               </div>
             </div>
 
@@ -872,11 +1260,14 @@ export default function ReportEditPage() {
             {previewUrls.length > 0 && (
               <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3">
                 {previewUrls.map((url, idx) => (
-                  <img
+                  <Image
                     key={idx}
                     src={url}
                     alt={`Forhåndsvisning ${idx + 1}`}
-                    className="rounded-md shadow-md w-full"
+                    width={1200}
+                    height={900}
+                    unoptimized
+                    className="rounded-md shadow-md w-full h-auto"
                   />
                 ))}
               </div>
@@ -916,9 +1307,22 @@ export default function ReportEditPage() {
               <p>
                 <b>Lokasjon:</b> {location}
               </p>
-              <p>
-                <b>Dommere:</b> {judge1}, {judge2}, {judge3}
-              </p>
+              <div>
+                <b>Dommere:</b>
+                <div className="mt-1 space-y-1">
+                  {judges
+                    .filter((judge) => judge.name.trim() || judge.position)
+                    .map((judge, index) => (
+                      <p key={`${judge.position}-${index}`}>
+                        {judge.position ? `Dommer ${judge.position}` : 'Dommer'}:{' '}
+                        {judge.name || '—'}
+                        {' • '}
+                        {formatPercent(judge.percent)}
+                        {typeof judge.percent === 'number' ? '%' : ''}
+                      </p>
+                    ))}
+                </div>
+              </div>
               <p>
                 <b>Klasse:</b> {classLevel}
               </p>
@@ -929,10 +1333,10 @@ export default function ReportEditPage() {
                 <b>Hest:</b> {horseName}
               </p>
               <p>
-                <b>Total %:</b> {totalPercent}
+                <b>Total %:</b> {formatPercent(totalPercent)}
               </p>
               <p>
-                <b>Avvik %:</b> {deviation}
+                <b>Avvik %:</b> {formatPercent(deviation)}
               </p>
             </div>
 
@@ -975,6 +1379,15 @@ export default function ReportEditPage() {
                   disabled={loading || isLocked}
                 >
                   {loading ? 'Lagrer...' : 'Lagre utkast'}
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary w-full sm:w-auto"
+                  onClick={handleSaveAndCreateSimilarDraft}
+                  disabled={loading || isLocked}
+                >
+                  {loading ? 'Oppretter...' : 'Lagre og fyll ut en til fra samme klasse'}
                 </button>
 
                 <button
