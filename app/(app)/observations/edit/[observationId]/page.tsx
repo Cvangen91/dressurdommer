@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -18,6 +18,11 @@ interface Observation {
   observation_year_id: string;
 }
 
+type JudgeSuggestion = {
+  user_id: string;
+  full_name: string;
+};
+
 export default function EditObservationPage() {
   const { observationId } = useParams<{ observationId: string }>();
   const router = useRouter();
@@ -34,6 +39,35 @@ export default function EditObservationPage() {
   const [numberOfHorses, setNumberOfHorses] = useState<number>(1);
   const [resultListUrl, setResultListUrl] = useState('');
   const [hostName, setHostName] = useState('');
+  const [hostUserId, setHostUserId] = useState<string | null>(null);
+
+  // Judge search
+  const [judgeSuggestions, setJudgeSuggestions] = useState<JudgeSuggestion[]>([]);
+  const [showJudgeDropdown, setShowJudgeDropdown] = useState(false);
+  const judgeDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  const searchJudgeSuggestions = async (query: string) => {
+    const q = query.trim();
+
+    if (q.length < 1) {
+      setJudgeSuggestions([]);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/judges/search?q=${encodeURIComponent(q)}`);
+
+      if (!res.ok) {
+        setJudgeSuggestions([]);
+        return;
+      }
+
+      const payload = (await res.json()) as { judges?: JudgeSuggestion[] };
+      setJudgeSuggestions(payload.judges ?? []);
+    } catch {
+      setJudgeSuggestions([]);
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -58,12 +92,36 @@ export default function EditObservationPage() {
       setNumberOfHorses(data.number_of_horses);
       setResultListUrl(data.result_list_url ?? '');
       setHostName(data.host_name);
+      setHostUserId(data.host_user_id ?? null);
 
       setLoading(false);
     };
 
     load();
   }, [observationId]);
+
+  useEffect(() => {
+    const onMouseDown = (e: MouseEvent) => {
+      if (!showJudgeDropdown) return;
+
+      const el = judgeDropdownRef.current;
+      if (!el) return;
+
+      if (e.target instanceof Node && !el.contains(e.target)) {
+        setShowJudgeDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [showJudgeDropdown]);
+
+  const filteredJudgeSuggestions = useMemo(() => {
+    const q = hostName.trim().toLowerCase();
+    if (q.length < 1) return [];
+
+    return judgeSuggestions.filter((j) => j.full_name.toLowerCase().includes(q));
+  }, [hostName, judgeSuggestions]);
 
   if (loading) return <p className="p-6">Laster…</p>;
   if (!observation) return <p className="p-6">Fant ikke bisitting.</p>;
@@ -104,6 +162,7 @@ export default function EditObservationPage() {
         number_of_horses: numberOfHorses,
         result_list_url: resultListUrl || null,
         host_name: hostName,
+        host_user_id: hostUserId,
         status: 'pending',
         rejection_comment: null,
       })
@@ -115,9 +174,9 @@ export default function EditObservationPage() {
     }
 
     // 🔔 Kun varsle på nytt hvis den var avvist
-    if (isRejected && observation.host_user_id) {
+    if (isRejected && hostUserId) {
       await supabase.from('notifications').insert({
-        user_id: observation.host_user_id,
+        user_id: hostUserId,
         type: 'observation_approval',
         title: 'Bisitting sendt på nytt',
         message: `${observerName} har sendt inn bisittingen på nytt etter avvisning.`,
@@ -200,14 +259,48 @@ export default function EditObservationPage() {
             />
           </div>
 
-          <div>
+          <div ref={judgeDropdownRef} className="relative overflow-visible">
             <label className="label">Dommer</label>
             <input
               value={hostName}
-              onChange={(e) => setHostName(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setHostName(value);
+                setHostUserId(null);
+                setShowJudgeDropdown(true);
+                void searchJudgeSuggestions(value);
+              }}
+              onFocus={() => {
+                if (!isEditable) return;
+
+                if (hostName.trim().length >= 1) {
+                  setShowJudgeDropdown(true);
+                  void searchJudgeSuggestions(hostName);
+                }
+              }}
               disabled={!isEditable}
+              autoComplete="off"
               className={`input ${!isEditable ? 'bg-gray-100 cursor-not-allowed' : ''}`}
             />
+
+            {isEditable && showJudgeDropdown && filteredJudgeSuggestions.length > 0 && (
+              <div className="absolute z-50 bg-white border rounded shadow w-full mt-1 max-h-48 overflow-y-auto">
+                {filteredJudgeSuggestions.map((j) => (
+                  <button
+                    key={j.user_id}
+                    type="button"
+                    onClick={() => {
+                      setHostName(j.full_name);
+                      setHostUserId(j.user_id);
+                      setShowJudgeDropdown(false);
+                    }}
+                    className="block w-full text-left px-3 py-2 hover:bg-gray-100"
+                  >
+                    {j.full_name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>

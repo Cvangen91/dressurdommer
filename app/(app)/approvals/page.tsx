@@ -13,6 +13,15 @@ interface PendingObservation {
   observer_name: string;
 }
 
+type PendingObservationRow = {
+  id: string;
+  date: string;
+  location: string;
+  class_level: string;
+  number_of_horses: number;
+  observer_name: string | null;
+};
+
 export default function ApprovalsPage() {
   const router = useRouter();
 
@@ -26,6 +35,7 @@ export default function ApprovalsPage() {
   useEffect(() => {
     const loadApprovals = async () => {
       setLoading(true);
+      setError(null);
 
       const {
         data: { user },
@@ -36,11 +46,6 @@ export default function ApprovalsPage() {
         return;
       }
 
-      /**
-       * Henter bisittinger:
-       * - der denne brukeren er host_user_id
-       * - som venter på bekreftelse
-       */
       const { data, error } = await supabase
         .from('observations')
         .select(
@@ -59,23 +64,27 @@ export default function ApprovalsPage() {
 
       if (error) {
         setError('Kunne ikke laste bisittinger.');
-      } else {
-        const mapped = (data ?? []).map((o: any) => ({
-          id: o.id,
-          date: o.date,
-          location: o.location,
-          class_level: o.class_level,
-          number_of_horses: o.number_of_horses,
-          observer_name: o.observer_name ?? 'Ukjent dommer',
-        }));
-
-        setObservations(mapped);
+        setObservations([]);
+        setLoading(false);
+        return;
       }
 
+      const rows = (data ?? []) as PendingObservationRow[];
+
+      const mapped: PendingObservation[] = rows.map((o) => ({
+        id: o.id,
+        date: o.date,
+        location: o.location,
+        class_level: o.class_level,
+        number_of_horses: o.number_of_horses,
+        observer_name: o.observer_name ?? 'Ukjent dommer',
+      }));
+
+      setObservations(mapped);
       setLoading(false);
     };
 
-    loadApprovals();
+    void loadApprovals();
   }, [router]);
 
   const handleDecision = async (id: string, approved: boolean) => {
@@ -83,7 +92,11 @@ export default function ApprovalsPage() {
 
     const { error } = await supabase
       .from('observations')
-      .update({ status: 'approved' })
+      .update({
+        status: 'approved',
+        host_approved_at: new Date().toISOString(),
+        rejection_comment: null,
+      })
       .eq('id', id);
 
     if (error) {
@@ -107,6 +120,7 @@ export default function ApprovalsPage() {
       .update({
         status: 'rejected',
         rejection_comment: rejectComment,
+        host_approved_at: null,
       })
       .eq('id', id);
 

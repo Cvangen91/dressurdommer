@@ -1,8 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+
+type JudgeSuggestion = {
+  user_id: string;
+  full_name: string;
+};
 
 export default function NewObservationPage() {
   const router = useRouter();
@@ -17,26 +22,60 @@ export default function NewObservationPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [hostName, setHostName] = useState('');
   const [hostUserId, setHostUserId] = useState<string | null>(null);
 
+  const [judgeSuggestions, setJudgeSuggestions] = useState<JudgeSuggestion[]>([]);
   const [showJudgeDropdown, setShowJudgeDropdown] = useState(false);
-  const [judgeSuggestions, setJudgeSuggestions] = useState<
-    { user_id: string; full_name: string }[]
-  >([]);
+
+  const judgeDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  const searchJudgeSuggestions = async (query: string) => {
+    const q = query.trim();
+
+    if (q.length < 1) {
+      setJudgeSuggestions([]);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/judges/search?q=${encodeURIComponent(q)}`);
+
+      if (!res.ok) {
+        setJudgeSuggestions([]);
+        return;
+      }
+
+      const payload = (await res.json()) as { judges?: JudgeSuggestion[] };
+      setJudgeSuggestions(payload.judges ?? []);
+    } catch {
+      setJudgeSuggestions([]);
+    }
+  };
 
   useEffect(() => {
-    const loadJudges = async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('user_id, full_name')
-        .not('full_name', 'is', null);
+    const onMouseDown = (e: MouseEvent) => {
+      if (!showJudgeDropdown) return;
 
-      if (data) setJudgeSuggestions(data);
+      const el = judgeDropdownRef.current;
+      if (!el) return;
+
+      if (e.target instanceof Node && !el.contains(e.target)) {
+        setShowJudgeDropdown(false);
+      }
     };
 
-    loadJudges();
-  }, []);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [showJudgeDropdown]);
+
+  const filteredJudgeSuggestions = useMemo(() => {
+    const q = hostName.trim().toLowerCase();
+    if (q.length < 1) return [];
+
+    return judgeSuggestions.filter((j) => j.full_name.toLowerCase().includes(q));
+  }, [hostName, judgeSuggestions]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,7 +181,11 @@ export default function NewObservationPage() {
               type="number"
               min={1}
               value={numberOfHorses}
-              onChange={(e) => setNumberOfHorses(Number(e.target.value))}
+              onChange={(e) =>
+                setNumberOfHorses(
+                  Number.isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber
+                )
+              }
               required
               className="w-full border rounded px-3 py-2"
             />
@@ -158,45 +201,47 @@ export default function NewObservationPage() {
             />
           </div>
 
-          <div className="relative overflow-visible">
+          <div ref={judgeDropdownRef} className="relative overflow-visible">
             <label className="block text-sm mb-1">Dommer du bisatt med</label>
 
             <input
               type="text"
               value={hostName}
               onChange={(e) => {
-                setHostName(e.target.value);
+                const value = e.target.value;
+                setHostName(value);
                 setHostUserId(null);
                 setShowJudgeDropdown(true);
+                void searchJudgeSuggestions(value);
               }}
               onFocus={() => {
-                if (hostName.length > 1) {
+                if (hostName.trim().length >= 1) {
                   setShowJudgeDropdown(true);
+                  void searchJudgeSuggestions(hostName);
                 }
               }}
               required
-              className="input"
+              className="w-full border rounded px-3 py-2"
               placeholder="Skriv navn på dommer"
+              autoComplete="off"
             />
 
-            {showJudgeDropdown && hostName.length > 1 && (
+            {showJudgeDropdown && filteredJudgeSuggestions.length > 0 && (
               <div className="absolute z-50 bg-white border rounded shadow w-full mt-1 max-h-48 overflow-y-auto">
-                {judgeSuggestions
-                  .filter((j) => j.full_name.toLowerCase().includes(hostName.toLowerCase()))
-                  .map((j) => (
-                    <button
-                      key={j.user_id}
-                      type="button"
-                      onClick={() => {
-                        setHostName(j.full_name);
-                        setHostUserId(j.user_id);
-                        setShowJudgeDropdown(false); // 👈 lukker dropdown
-                      }}
-                      className="block w-full text-left px-3 py-2 hover:bg-gray-100"
-                    >
-                      {j.full_name}
-                    </button>
-                  ))}
+                {filteredJudgeSuggestions.map((j) => (
+                  <button
+                    key={j.user_id}
+                    type="button"
+                    onClick={() => {
+                      setHostName(j.full_name);
+                      setHostUserId(j.user_id);
+                      setShowJudgeDropdown(false);
+                    }}
+                    className="block w-full text-left px-3 py-2 hover:bg-gray-100"
+                  >
+                    {j.full_name}
+                  </button>
+                ))}
               </div>
             )}
           </div>
