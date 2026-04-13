@@ -26,6 +26,11 @@ type Payload = {
   draft?: boolean;
 };
 
+type PersistedJudge = {
+  position?: 'C' | 'M' | 'H' | 'B' | 'E';
+  name?: string;
+};
+
 Deno.serve(async (req) => {
   try {
     // ✅ CORS preflight
@@ -73,7 +78,7 @@ Deno.serve(async (req) => {
     // 1) Hent rapport fra DB
     const { data: report, error: reportErr } = await supabase
       .from('judge_meeting_reports')
-      .select('id, user_id, show_date, location, judge_1, judge_2, judge_3, payload, created_at')
+      .select('id, user_id, show_date, location, judges, payload, created_at')
       .eq('id', reportId)
       .single();
 
@@ -85,6 +90,12 @@ Deno.serve(async (req) => {
       });
     }
 
+    const reportJudges = Array.isArray(report.judges)
+      ? (report.judges as PersistedJudge[])
+          .map((judge) => judge?.name?.trim() || '')
+          .filter((name) => name.length > 0)
+      : [];
+
     const payload = (report.payload || {}) as Payload;
 
     // 2) Lag PDF
@@ -92,7 +103,7 @@ Deno.serve(async (req) => {
       reportId: report.id,
       showDate: report.show_date,
       location: report.location,
-      judges: [report.judge_1, report.judge_2, report.judge_3].filter(Boolean),
+      judges: reportJudges,
       payload,
       createdAt: report.created_at,
     });
@@ -134,7 +145,7 @@ Deno.serve(async (req) => {
         <ul>
           <li><b>Dato:</b> ${escapeHtml(report.show_date || '-')}</li>
           <li><b>Lokasjon:</b> ${escapeHtml(report.location || '-')}</li>
-          <li><b>Dommere:</b> ${escapeHtml([report.judge_1, report.judge_2, report.judge_3].filter(Boolean).join(', '))}</li>
+          <li><b>Dommere:</b> ${escapeHtml(reportJudges.join(', '))}</li>
         </ul>
         <p>PDF av rapporten ligger vedlagt. Protokollbilder er vedlagt som separate filer.</p>
         <p>Produsert på dressurdommer.no</p>

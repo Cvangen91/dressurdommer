@@ -24,6 +24,78 @@ type PersistedJudgeEntry = {
 
 const JUDGE_POSITIONS: JudgePosition[] = ['C', 'M', 'H', 'B', 'E'];
 
+const MOBILE_BREAKPOINT = 768;
+const MAX_IMAGE_DIMENSION = 2200;
+const TARGET_IMAGE_SIZE_BYTES = 1_200_000;
+const JPEG_QUALITY_STEPS = [0.82, 0.74, 0.66, 0.58];
+const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const power = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** power;
+  return `${value.toFixed(power === 0 ? 0 : 1)} ${units[power]}`;
+}
+
+async function loadImageForCompression(file: File): Promise<HTMLImageElement> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new window.Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Kunne ikke lese bilde.'));
+      img.src = objectUrl;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function compressImageFile(file: File): Promise<File> {
+  if (!file.type.startsWith('image/')) return file;
+  if (file.size <= TARGET_IMAGE_SIZE_BYTES) return file;
+
+  const image = await loadImageForCompression(file);
+  const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.width, image.height));
+  const targetWidth = Math.max(1, Math.round(image.width * scale));
+  const targetHeight = Math.max(1, Math.round(image.height * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const context = canvas.getContext('2d');
+  if (!context) return file;
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+  let bestBlob: Blob | null = null;
+  for (const quality of JPEG_QUALITY_STEPS) {
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((result) => resolve(result), 'image/jpeg', quality);
+    });
+
+    if (!blob) continue;
+    if (!bestBlob || blob.size < bestBlob.size) {
+      bestBlob = blob;
+    }
+    if (blob.size <= TARGET_IMAGE_SIZE_BYTES) {
+      bestBlob = blob;
+      break;
+    }
+  }
+
+  if (!bestBlob) return file;
+  if (bestBlob.size >= file.size * 0.95) return file;
+
+  const baseName = file.name.replace(/\.[^.]+$/, '');
+  return new File([bestBlob], `${baseName}.jpg`, {
+    type: 'image/jpeg',
+    lastModified: Date.now(),
+  });
+}
+
 export default function ReportNewPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
@@ -238,6 +310,9 @@ export default function ReportNewPage() {
   // --- STEG 4: Bilder ---
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [compressImages, setCompressImages] = useState(true);
+  const [isMobileDevice, setIsMobileDevice] = useState(false);
+  const [uploadLimitWarning, setUploadLimitWarning] = useState<string | null>(null);
 
   const nextStep = () => setStep((s) => Math.min(5, s + 1));
   const prevStep = () => setStep((s) => Math.max(1, s - 1));
@@ -259,8 +334,20 @@ export default function ReportNewPage() {
   async function uploadImages(userId: string) {
     if (!selectedFiles.length) return [];
 
+    const filesForUpload = compressImages
+      ? await Promise.all(
+          selectedFiles.map(async (file) => {
+            try {
+              return await compressImageFile(file);
+            } catch {
+              return file;
+            }
+          })
+        )
+      : selectedFiles;
+
     const paths: string[] = [];
-    for (const file of selectedFiles) {
+    for (const file of filesForUpload) {
       const safeName = file.name.replace(/\s+/g, '_');
       const fileName = `${userId}/${Date.now()}-${safeName}`;
 
@@ -452,6 +539,15 @@ export default function ReportNewPage() {
     setLoading(true);
     setMessage(null);
 
+    if (totalSelectedBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+      setLoading(false);
+      setStep(4);
+      setMessage(
+        `For stor total vedleggsstørrelse. Maks er ${formatBytes(MAX_TOTAL_ATTACHMENT_BYTES)}.`
+      );
+      return;
+    }
+
     try {
       const {
         data: { user },
@@ -610,9 +706,40 @@ export default function ReportNewPage() {
   const handleFilesSelected = (files: FileList | null) => {
     if (!files) return;
     const fileArray = Array.from(files);
+
+    const selectedBytes = fileArray.reduce((sum, file) => sum + file.size, 0);
+    if (selectedBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+      setUploadLimitWarning(
+        `Maks total vedleggsstørrelse er ${formatBytes(MAX_TOTAL_ATTACHMENT_BYTES)}. Velg færre eller mindre filer.`
+      );
+      return;
+    }
+
+    previewUrls.forEach((url) => URL.revokeObjectURL(url));
+    setUploadLimitWarning(null);
     setSelectedFiles(fileArray);
     setPreviewUrls(fileArray.map((f) => URL.createObjectURL(f)));
   };
+
+  const totalSelectedBytes = useMemo(
+    () => selectedFiles.reduce((sum, file) => sum + file.size, 0),
+    [selectedFiles]
+  );
+
+  const remainingAttachmentBytes = Math.max(0, MAX_TOTAL_ATTACHMENT_BYTES - totalSelectedBytes);
+  const hasReachedAttachmentLimit = totalSelectedBytes >= MAX_TOTAL_ATTACHMENT_BYTES;
+
+  useEffect(() => {
+    const detectMobile = () => {
+      const mobileByWidth = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches;
+      const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+      setIsMobileDevice(mobileByWidth || coarsePointer);
+    };
+
+    detectMobile();
+    window.addEventListener('resize', detectMobile);
+    return () => window.removeEventListener('resize', detectMobile);
+  }, []);
 
   // Rydd opp object URLs
   useEffect(() => {
@@ -1120,6 +1247,20 @@ export default function ReportNewPage() {
               Du kan velge bildefiler, pdf eller lignende.
             </p>
 
+            <label className="flex items-start gap-2 mb-3 text-sm text-deep-sea">
+              <input
+                type="checkbox"
+                checked={compressImages}
+                onChange={(e) => setCompressImages(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Komprimer bilder før opplasting
+                {isMobileDevice ? ' (anbefalt på mobil)' : ''}. Dette gjør filene mindre og
+                reduserer risiko for at opplastingen feiler.
+              </span>
+            </label>
+
             <input
               type="file"
               accept="image/*"
@@ -1127,6 +1268,28 @@ export default function ReportNewPage() {
               onChange={(e) => handleFilesSelected(e.target.files)}
               className="input"
             />
+
+            <p className="text-xs text-muted mt-2">
+              Maks total størrelse: {formatBytes(MAX_TOTAL_ATTACHMENT_BYTES)}. Gjenstår:{' '}
+              {formatBytes(remainingAttachmentBytes)}.
+            </p>
+
+            {hasReachedAttachmentLimit && (
+              <p className="text-xs text-amber-700 mt-1">
+                Du har nådd maksgrensen for vedlegg. Fjern eller bytt til mindre filer for å legge
+                til flere.
+              </p>
+            )}
+
+            {uploadLimitWarning && (
+              <p className="text-xs text-red-700 mt-1">{uploadLimitWarning}</p>
+            )}
+
+            {selectedFiles.length > 0 && (
+              <p className="text-xs text-muted mt-2">
+                Valgt: {selectedFiles.length} filer ({formatBytes(totalSelectedBytes)})
+              </p>
+            )}
 
             {previewUrls.length > 0 && (
               <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3">
