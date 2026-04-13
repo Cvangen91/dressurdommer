@@ -1,5 +1,15 @@
+declare const Deno: {
+  serve: (handler: (req: Request) => Response | Promise<Response>) => void;
+  env: {
+    get: (key: string) => string | undefined;
+  };
+};
+
+// @ts-expect-error URL imports are valid in Supabase Edge (Deno), but not in TS Node resolution.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// @ts-expect-error URL imports are valid in Supabase Edge (Deno), but not in TS Node resolution.
 import { PDFDocument, StandardFonts } from 'https://esm.sh/pdf-lib@1.17.1';
+// @ts-expect-error URL imports are valid in Supabase Edge (Deno), but not in TS Node resolution.
 import { Resend } from 'https://esm.sh/resend@4.0.0';
 
 const corsHeaders = {

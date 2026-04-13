@@ -1240,11 +1240,11 @@ export default function ReportNewPage() {
         {step === 4 && (
           <>
             <h2 className="text-xl font-semibold text-deep-sea mb-4">
-              Steg 4: Last opp protokollbilder
+              Steg 4: Last opp protokollbilder og resultatliste
             </h2>
             <p className="text-muted mb-3 text-sm">
-              Her kan du laste opp protokollene fra stevnet. Du kan laste opp flere filer samtidig.
-              Du kan velge bildefiler, pdf eller lignende.
+              Her kan du laste opp protokollene og resultatlisten fra stevnet. Du kan laste opp
+              flere filer samtidig. Du kan velge bildefiler, pdf eller lignende.
             </p>
 
             <label className="flex items-start gap-2 mb-3 text-sm text-deep-sea">
