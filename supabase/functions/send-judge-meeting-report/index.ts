@@ -12,9 +12,12 @@ type Payload = {
   classLevel?: string;
   riderName?: string;
   horseName?: string;
+  numStartersClass?: number | null;
+  classPlacementTotal?: number | null;
   totalPercent?: number | '';
   highestPercent?: number | '';
   lowestPercent?: number | '';
+  judgePercents?: Partial<Record<'C' | 'M' | 'H' | 'B' | 'E', number>>;
   deviation?: string;
   scores?: Record<string, number | ''>;
   comments?: Record<string, string>;
@@ -29,6 +32,9 @@ type Payload = {
 type PersistedJudge = {
   position?: 'C' | 'M' | 'H' | 'B' | 'E';
   name?: string;
+  user_id?: string | null;
+  percent?: number | null;
+  resultNumber?: number | null;
 };
 
 Deno.serve(async (req) => {
@@ -91,18 +97,30 @@ Deno.serve(async (req) => {
     }
 
     const reportJudges = Array.isArray(report.judges)
-      ? (report.judges as PersistedJudge[])
-          .map((judge) => judge?.name?.trim() || '')
-          .filter((name) => name.length > 0)
+      ? (report.judges as PersistedJudge[]).filter(
+          (judge) => Boolean(judge?.name?.trim()) || Boolean(judge?.user_id)
+        )
       : [];
 
     const payload = (report.payload || {}) as Payload;
+
+    let submittedBy = '-';
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('user_id', report.user_id)
+      .maybeSingle();
+
+    if (profileData?.full_name?.trim()) {
+      submittedBy = profileData.full_name.trim();
+    }
 
     // 2) Lag PDF
     const pdfBytes = await generatePdf({
       reportId: report.id,
       showDate: report.show_date,
       location: report.location,
+      submittedBy,
       judges: reportJudges,
       payload,
       createdAt: report.created_at,
@@ -145,7 +163,15 @@ Deno.serve(async (req) => {
         <ul>
           <li><b>Dato:</b> ${escapeHtml(report.show_date || '-')}</li>
           <li><b>Lokasjon:</b> ${escapeHtml(report.location || '-')}</li>
-          <li><b>Dommere:</b> ${escapeHtml(reportJudges.join(', '))}</li>
+          <li><b>Dommere:</b> ${escapeHtml(
+            reportJudges
+              .map((judge) =>
+                `${judge.position || ''}${judge.name ? `: ${judge.name}` : ''}`.trim()
+              )
+              .join(', ')
+          )}</li>
+          <li><b>Klasse/program:</b> ${escapeHtml(payload.classLevel || '-')}</li>
+          <li><b>Ekvipasje:</b> ${escapeHtml(payload.riderName || '-')} / ${escapeHtml(payload.horseName || '-')}</li>
         </ul>
         <p>PDF av rapporten ligger vedlagt. Protokollbilder er vedlagt som separate filer.</p>
         <p>Produsert på dressurdommer.no</p>
@@ -186,7 +212,8 @@ async function generatePdf(input: {
   reportId: string;
   showDate: string | null;
   location: string | null;
-  judges: string[];
+  submittedBy: string;
+  judges: PersistedJudge[];
   payload: Payload;
   createdAt: string;
 }) {
@@ -223,6 +250,12 @@ async function generatePdf(input: {
     return lines;
   };
 
+  const formatPercent = (value: number | string | null | undefined) => {
+    if (value === null || value === undefined || value === '') return '-';
+    const numeric = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(numeric) ? `${numeric.toFixed(3)}%` : '-';
+  };
+
   // Header
   line('Dommermøterapport', 18, true);
   line(`Rapport-ID: ${input.reportId}`, 9);
@@ -231,20 +264,49 @@ async function generatePdf(input: {
 
   line(`Dato: ${input.showDate || '-'}`, 12, true);
   line(`Lokasjon: ${input.location || '-'}`, 12, true);
-  line(`Dommere: ${input.judges.length ? input.judges.join(', ') : '-'}`, 11);
+  line(`Innsendt av: ${input.submittedBy || '-'}`, 11);
   y -= 12;
 
   const p = input.payload;
 
-  line('Grunninfo', 14, true);
+  line('Info om ekvipasjen', 14, true);
   line(`Klasse/program: ${p.classLevel || '-'}`);
   line(`Rytter: ${p.riderName || '-'}`);
   line(`Hest: ${p.horseName || '-'}`);
-  line(`Total %: ${p.totalPercent ?? '-'}`);
-  line(`Høyeste %: ${p.highestPercent ?? '-'}`);
-  line(`Laveste %: ${p.lowestPercent ?? '-'}`);
+  line(`Antall i klassen: ${p.numStartersClass ?? '-'}`);
+  line(`Plassering i klassen (total): ${p.classPlacementTotal ?? '-'}`);
+  line(`Total %: ${formatPercent(p.totalPercent)}`);
+  line(`Høyeste %: ${formatPercent(p.highestPercent)}`);
+  line(`Laveste %: ${formatPercent(p.lowestPercent)}`);
   line(`Avvik %: ${p.deviation ?? '-'}`);
   y -= 12;
+
+  line('Dommere og resultater', 14, true);
+  const judgeOrder: Array<'C' | 'M' | 'H' | 'B' | 'E'> = ['C', 'M', 'H', 'B', 'E'];
+  const judgeByPosition = new Map(
+    input.judges
+      .filter((judge): judge is PersistedJudge & { position: 'C' | 'M' | 'H' | 'B' | 'E' } =>
+        Boolean(judge.position)
+      )
+      .map((judge) => [judge.position, judge])
+  );
+
+  for (const position of judgeOrder) {
+    const judge = judgeByPosition.get(position);
+    if (!judge) continue;
+
+    const percent = judge.percent ?? p.judgePercents?.[position] ?? null;
+    const row = [
+      `${position}: ${judge.name || '-'}`,
+      `Prosent: ${formatPercent(percent)}`,
+      `Plassering i klassen: ${judge.resultNumber ?? '-'}`,
+    ].join(' | ');
+
+    for (const wrapped of wrap(row, contentWidth, 10)) {
+      line(wrapped, 10);
+    }
+  }
+  y -= 10;
 
   // Tabell
   line('Vurderingspunkter', 14, true);
